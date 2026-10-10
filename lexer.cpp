@@ -51,6 +51,13 @@ void Lexer::init(const char *source) {
   line_ = 1;
   col_ = 1;
   lookahead_count_ = 0;
+
+  // Skip UTF-8 BOM if present (0xEF, 0xBB, 0xBF)
+  if (static_cast<unsigned char>(src_[0]) == 0xEF &&
+      static_cast<unsigned char>(src_[1]) == 0xBB &&
+      static_cast<unsigned char>(src_[2]) == 0xBF) {
+    cursor_ = 3;
+  }
 }
 
 void Lexer::init(std::string_view source) { init(source.data()); }
