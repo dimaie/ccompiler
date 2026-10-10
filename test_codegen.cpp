@@ -60,6 +60,21 @@ static void test_x86_64_codegen() {
   assert(asm_code.find("addq %r10, %rax") != std::string::npos);
   assert(asm_code.find("leave") != std::string::npos);
   assert(asm_code.find("ret") != std::string::npos);
+
+  // Test while and do-while loops
+  {
+    auto loop_prog = parse("int x = 0;\n"
+                           "while (x < 10) {\n"
+                           "  x = x + 1;\n"
+                           "}\n"
+                           "do {\n"
+                           "  x = x - 1;\n"
+                           "} while (x > 0);\n"
+                           "return x;\n");
+    std::string loop_asm = gen->generate_to_string(*loop_prog);
+    assert(loop_asm.find(".Lwhile_cond") != std::string::npos);
+    assert(loop_asm.find(".Ldowhile_body") != std::string::npos);
+  }
 }
 
 static void test_arm64_codegen() {
@@ -84,6 +99,22 @@ static void test_arm64_codegen() {
   assert(asm_code.find("ldr x0, [x29,") != std::string::npos);
   assert(asm_code.find("ldp x29, x30, [sp], 64") != std::string::npos);
   assert(asm_code.find("ret") != std::string::npos);
+
+  // Test while and do-while loops
+  {
+    auto loop_prog = parse("int x = 0;\n"
+                           "while (x < 5) {\n"
+                           "  x = x + 1;\n"
+                           "}\n"
+                           "do {\n"
+                           "  x = x - 1;\n"
+                           "} while (x > 0);\n"
+                           "return x;\n");
+    std::string loop_asm = gen->generate_to_string(*loop_prog);
+    assert(loop_asm.find(".Larm_while_cond") != std::string::npos);
+    assert(loop_asm.find(".Larm_dowhile_body") != std::string::npos);
+    assert(loop_asm.find("cbnz x0,") != std::string::npos);
+  }
 }
 
 static void test_avr_codegen() {
@@ -106,6 +137,22 @@ static void test_avr_codegen() {
   assert(asm_code.find("r25") != std::string::npos);
   assert(asm_code.find("std Y+") != std::string::npos);
   assert(asm_code.find("ret") != std::string::npos);
+
+  // Test while and do-while loops
+  {
+    auto loop_prog = parse("int x = 0;\n"
+                           "while (x < 5) {\n"
+                           "  x = x + 1;\n"
+                           "}\n"
+                           "do {\n"
+                           "  x = x - 1;\n"
+                           "} while (x > 0);\n"
+                           "return x;\n");
+    std::string loop_asm = gen->generate_to_string(*loop_prog);
+    assert(loop_asm.find(".Lavr_while_cond") != std::string::npos);
+    assert(loop_asm.find(".Lavr_dowhile_body") != std::string::npos);
+    assert(loop_asm.find("brne .Lavr_dowhile_body") != std::string::npos);
+  }
 }
 
 static void test_c_codegen() {
@@ -118,6 +165,22 @@ static void test_c_codegen() {
   assert(c_code.find("int main(void)") != std::string::npos);
   assert(c_code.find("int x = 42;") != std::string::npos);
   assert(c_code.find("return (x + 1);") != std::string::npos);
+
+  // Test while and do-while loops
+  {
+    auto loop_prog = parse("int a = 0;\n"
+                           "while (a < 10) {\n"
+                           "  a = a + 1;\n"
+                           "}\n"
+                           "do {\n"
+                           "  a = a - 1;\n"
+                           "} while (a > 0);\n"
+                           "return a;\n");
+    std::string loop_c = gen->generate_to_string(*loop_prog);
+    assert(loop_c.find("while ((a < 10)) {") != std::string::npos);
+    assert(loop_c.find("do {") != std::string::npos);
+    assert(loop_c.find("} while ((a > 0));") != std::string::npos);
+  }
 }
 
 int main() {

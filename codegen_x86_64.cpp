@@ -262,6 +262,40 @@ void X86_64CodeGenerator::visit(const ForNode &node) {
   emit_raw(end_lbl + ":");
 }
 
+void X86_64CodeGenerator::visit(const WhileNode &node) {
+  std::string cond_lbl = new_label(".Lwhile_cond");
+  std::string end_lbl = new_label(".Lwhile_end");
+
+  emit_raw(cond_lbl + ":");
+  if (node.cond) {
+    node.cond->accept(*this);
+    emit_line("cmpq $0, %rax");
+    emit_line("je " + end_lbl);
+  }
+
+  if (node.body) {
+    node.body->accept(*this);
+  }
+
+  emit_line("jmp " + cond_lbl);
+  emit_raw(end_lbl + ":");
+}
+
+void X86_64CodeGenerator::visit(const DoWhileNode &node) {
+  std::string body_lbl = new_label(".Ldowhile_body");
+
+  emit_raw(body_lbl + ":");
+  if (node.body) {
+    node.body->accept(*this);
+  }
+
+  if (node.cond) {
+    node.cond->accept(*this);
+    emit_line("cmpq $0, %rax");
+    emit_line("jne " + body_lbl);
+  }
+}
+
 void X86_64CodeGenerator::visit(const ReturnNode &node) {
   if (node.expr) {
     node.expr->accept(*this);

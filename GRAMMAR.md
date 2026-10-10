@@ -20,6 +20,8 @@ statement
     ::= var_decl
       | if_stmt
       | for_stmt
+      | while_stmt
+      | do_while_stmt
       | return_stmt
       | compound_stmt
       | expr_stmt ;
@@ -32,6 +34,12 @@ if_stmt
 
 for_stmt
     ::= "for" "(" ( var_decl | ( expr )? ";" ) ( expr )? ";" ( expr )? ")" statement ;
+
+while_stmt
+    ::= "while" "(" expr ")" statement ;
+
+do_while_stmt
+    ::= "do" statement "while" "(" expr ")" ";" ;
 
 return_stmt
     ::= "return" expr ";" ;

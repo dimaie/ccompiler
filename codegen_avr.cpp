@@ -326,6 +326,40 @@ void AVRCodeGenerator::visit(const ForNode &node) {
   emit_raw(end_lbl + ":");
 }
 
+void AVRCodeGenerator::visit(const WhileNode &node) {
+  std::string cond_lbl = new_label(".Lavr_while_cond");
+  std::string end_lbl = new_label(".Lavr_while_end");
+
+  emit_raw(cond_lbl + ":");
+  if (node.cond) {
+    node.cond->accept(*this);
+    emit_line("sbiw r24, 0");
+    emit_line("breq " + end_lbl);
+  }
+
+  if (node.body) {
+    node.body->accept(*this);
+  }
+
+  emit_line("rjmp " + cond_lbl);
+  emit_raw(end_lbl + ":");
+}
+
+void AVRCodeGenerator::visit(const DoWhileNode &node) {
+  std::string body_lbl = new_label(".Lavr_dowhile_body");
+
+  emit_raw(body_lbl + ":");
+  if (node.body) {
+    node.body->accept(*this);
+  }
+
+  if (node.cond) {
+    node.cond->accept(*this);
+    emit_line("sbiw r24, 0");
+    emit_line("brne " + body_lbl);
+  }
+}
+
 void AVRCodeGenerator::visit(const ReturnNode &node) {
   if (node.expr) {
     node.expr->accept(*this);

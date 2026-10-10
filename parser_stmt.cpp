@@ -67,6 +67,26 @@ std::unique_ptr<ForNode> Parser::parse_for() {
                                   std::move(step), std::move(body));
 }
 
+std::unique_ptr<WhileNode> Parser::parse_while() {
+  Token t = expect(TOK_KW_WHILE, "Expected 'while'");
+  expect(TOK_LPAREN, "Expected '(' after 'while'");
+  auto cond = parse_expr();
+  expect(TOK_RPAREN, "Expected ')' after while condition");
+  auto body = parse_statement();
+  return std::make_unique<WhileNode>(t.line, std::move(cond), std::move(body));
+}
+
+std::unique_ptr<DoWhileNode> Parser::parse_do_while() {
+  Token t = expect(TOK_KW_DO, "Expected 'do'");
+  auto body = parse_statement();
+  expect(TOK_KW_WHILE, "Expected 'while' after do body");
+  expect(TOK_LPAREN, "Expected '(' after 'while'");
+  auto cond = parse_expr();
+  expect(TOK_RPAREN, "Expected ')' after do-while condition");
+  expect(TOK_SEMICOLON, "Expected ';' after do-while loop");
+  return std::make_unique<DoWhileNode>(t.line, std::move(body), std::move(cond));
+}
+
 std::unique_ptr<ReturnNode> Parser::parse_return() {
   Token t = expect(TOK_KW_RETURN, "Expected 'return'");
   auto expr = parse_expr();
@@ -82,6 +102,12 @@ std::unique_ptr<ASTNode> Parser::parse_statement() {
   }
   if (t.type == TOK_KW_FOR) {
     return parse_for();
+  }
+  if (t.type == TOK_KW_WHILE) {
+    return parse_while();
+  }
+  if (t.type == TOK_KW_DO) {
+    return parse_do_while();
   }
   if (t.type == TOK_KW_IF) {
     return parse_if();

@@ -23,7 +23,9 @@ void CCodeGenerator::visit(const ProgramNode &node) {
       stmt->accept(*this);
       if (stmt->getType() != ASTNodeType::Compound &&
           stmt->getType() != ASTNodeType::If &&
-          stmt->getType() != ASTNodeType::For) {
+          stmt->getType() != ASTNodeType::For &&
+          stmt->getType() != ASTNodeType::While &&
+          stmt->getType() != ASTNodeType::DoWhile) {
         *out_ << ";\n";
       } else {
         *out_ << "\n";
@@ -41,7 +43,9 @@ void CCodeGenerator::visit(const CompoundNode &node) {
       stmt->accept(*this);
       if (stmt->getType() != ASTNodeType::Compound &&
           stmt->getType() != ASTNodeType::If &&
-          stmt->getType() != ASTNodeType::For) {
+          stmt->getType() != ASTNodeType::For &&
+          stmt->getType() != ASTNodeType::While &&
+          stmt->getType() != ASTNodeType::DoWhile) {
         *out_ << ";\n";
       } else {
         *out_ << "\n";
@@ -118,7 +122,31 @@ void CCodeGenerator::visit(const ForNode &node) {
   }
 }
 
+void CCodeGenerator::visit(const WhileNode &node) {
+  *out_ << "while (";
+  if (node.cond) {
+    node.cond->accept(*this);
+  }
+  *out_ << ") ";
+  if (node.body) {
+    node.body->accept(*this);
+  }
+}
+
+void CCodeGenerator::visit(const DoWhileNode &node) {
+  *out_ << "do ";
+  if (node.body) {
+    node.body->accept(*this);
+  }
+  *out_ << " while (";
+  if (node.cond) {
+    node.cond->accept(*this);
+  }
+  *out_ << ");";
+}
+
 void CCodeGenerator::visit(const ReturnNode &node) {
   *out_ << "return ";
   if (node.expr) node.expr->accept(*this);
 }
+

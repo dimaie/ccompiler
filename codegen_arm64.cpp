@@ -267,6 +267,38 @@ void ARM64CodeGenerator::visit(const ForNode &node) {
   emit_raw(end_lbl + ":");
 }
 
+void ARM64CodeGenerator::visit(const WhileNode &node) {
+  std::string cond_lbl = new_label(".Larm_while_cond");
+  std::string end_lbl = new_label(".Larm_while_end");
+
+  emit_raw(cond_lbl + ":");
+  if (node.cond) {
+    node.cond->accept(*this);
+    emit_line("cbz x0, " + end_lbl);
+  }
+
+  if (node.body) {
+    node.body->accept(*this);
+  }
+
+  emit_line("b " + cond_lbl);
+  emit_raw(end_lbl + ":");
+}
+
+void ARM64CodeGenerator::visit(const DoWhileNode &node) {
+  std::string body_lbl = new_label(".Larm_dowhile_body");
+
+  emit_raw(body_lbl + ":");
+  if (node.body) {
+    node.body->accept(*this);
+  }
+
+  if (node.cond) {
+    node.cond->accept(*this);
+    emit_line("cbnz x0, " + body_lbl);
+  }
+}
+
 void ARM64CodeGenerator::visit(const ReturnNode &node) {
   if (node.expr) {
     node.expr->accept(*this);

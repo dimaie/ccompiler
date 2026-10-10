@@ -164,6 +164,62 @@ static void test_for_node() {
   }
 }
 
+static void test_while_node() {
+  std::cout << "Testing WhileNode...\n";
+
+  // While loop with compound body
+  {
+    auto prog = parse_source("while (a < 10) { a = a + 1; }\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::While);
+    auto *while_node = static_cast<WhileNode *>(prog->statements[0].get());
+    assert(while_node->cond != nullptr);
+    assert(while_node->cond->getType() == ASTNodeType::BinaryOp);
+    assert(while_node->body != nullptr);
+    assert(while_node->body->getType() == ASTNodeType::Compound);
+  }
+
+  // While loop with single-statement body
+  {
+    auto prog = parse_source("while (x > 0) return x;\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::While);
+    auto *while_node = static_cast<WhileNode *>(prog->statements[0].get());
+    assert(while_node->cond != nullptr);
+    assert(while_node->cond->getType() == ASTNodeType::BinaryOp);
+    assert(while_node->body != nullptr);
+    assert(while_node->body->getType() == ASTNodeType::Return);
+  }
+}
+
+static void test_do_while_node() {
+  std::cout << "Testing DoWhileNode...\n";
+
+  // Do-while loop with compound body
+  {
+    auto prog = parse_source("do { a = a + 1; } while (a < 10);\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::DoWhile);
+    auto *do_node = static_cast<DoWhileNode *>(prog->statements[0].get());
+    assert(do_node->cond != nullptr);
+    assert(do_node->cond->getType() == ASTNodeType::BinaryOp);
+    assert(do_node->body != nullptr);
+    assert(do_node->body->getType() == ASTNodeType::Compound);
+  }
+
+  // Do-while loop with single statement body
+  {
+    auto prog = parse_source("do a = a + 1; while (a < 5);\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::DoWhile);
+    auto *do_node = static_cast<DoWhileNode *>(prog->statements[0].get());
+    assert(do_node->cond != nullptr);
+    assert(do_node->cond->getType() == ASTNodeType::BinaryOp);
+    assert(do_node->body != nullptr);
+    assert(do_node->body->getType() == ASTNodeType::Assign);
+  }
+}
+
 static void test_return_node() {
   std::cout << "Testing ReturnNode...\n";
 
@@ -463,6 +519,39 @@ static void test_syntax_errors() {
     }
     assert(threw);
   }
+
+  // Missing '(' after while
+  {
+    bool threw = false;
+    try {
+      parse_source("while x > 0) return 1;\n");
+    } catch (const ParseException &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+
+  // Missing 'while' after do body
+  {
+    bool threw = false;
+    try {
+      parse_source("do { x = 1; } (x > 0);\n");
+    } catch (const ParseException &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+
+  // Missing ';' after do-while
+  {
+    bool threw = false;
+    try {
+      parse_source("do { x = 1; } while (x > 0)\n");
+    } catch (const ParseException &) {
+      threw = true;
+    }
+    assert(threw);
+  }
 }
 
 int main() {
@@ -474,6 +563,8 @@ int main() {
   test_var_decl_node();
   test_if_node();
   test_for_node();
+  test_while_node();
+  test_do_while_node();
   test_return_node();
   test_assign_node();
   test_binary_op_node();
@@ -484,7 +575,8 @@ int main() {
   test_syntax_errors();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (12/12)\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (14/14)\n";
   std::cout << "========================================\n";
   return 0;
 }
+

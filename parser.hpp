@@ -24,6 +24,8 @@ public:
   std::unique_ptr<ASTNode> parse_statement();
   std::unique_ptr<IfNode> parse_if();
   std::unique_ptr<ForNode> parse_for();
+  std::unique_ptr<WhileNode> parse_while();
+  std::unique_ptr<DoWhileNode> parse_do_while();
   std::unique_ptr<ReturnNode> parse_return();
   std::unique_ptr<CompoundNode> parse_compound_statement();
 

@@ -14,6 +14,8 @@ enum class ASTNodeType {
   VarDecl,
   If,
   For,
+  While,
+  DoWhile,
   Return,
   Assign,
   BinaryOp,
@@ -67,6 +69,8 @@ class CompoundNode;
 class VarDeclNode;
 class IfNode;
 class ForNode;
+class WhileNode;
+class DoWhileNode;
 class ReturnNode;
 class AssignNode;
 class BinaryOpNode;
@@ -86,6 +90,8 @@ public:
   virtual void visit(const VarDeclNode &node) = 0;
   virtual void visit(const IfNode &node) = 0;
   virtual void visit(const ForNode &node) = 0;
+  virtual void visit(const WhileNode &node) = 0;
+  virtual void visit(const DoWhileNode &node) = 0;
   virtual void visit(const ReturnNode &node) = 0;
   virtual void visit(const AssignNode &node) = 0;
   virtual void visit(const BinaryOpNode &node) = 0;
@@ -268,6 +274,66 @@ public:
     std::cout << "[Body]\n";
     if (body) {
       body->print(indent + 2);
+    }
+  }
+};
+
+class WhileNode : public ASTNode {
+public:
+  std::unique_ptr<ASTNode> cond;
+  std::unique_ptr<ASTNode> body;
+
+  WhileNode(int line, std::unique_ptr<ASTNode> cond,
+            std::unique_ptr<ASTNode> body)
+      : ASTNode(line), cond(std::move(cond)), body(std::move(body)) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::While; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    std::cout << "While\n";
+
+    print_indent(indent + 1);
+    std::cout << "[Condition]\n";
+    if (cond) {
+      cond->print(indent + 2);
+    }
+
+    print_indent(indent + 1);
+    std::cout << "[Body]\n";
+    if (body) {
+      body->print(indent + 2);
+    }
+  }
+};
+
+class DoWhileNode : public ASTNode {
+public:
+  std::unique_ptr<ASTNode> body;
+  std::unique_ptr<ASTNode> cond;
+
+  DoWhileNode(int line, std::unique_ptr<ASTNode> body,
+              std::unique_ptr<ASTNode> cond)
+      : ASTNode(line), body(std::move(body)), cond(std::move(cond)) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::DoWhile; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    std::cout << "DoWhile\n";
+
+    print_indent(indent + 1);
+    std::cout << "[Body]\n";
+    if (body) {
+      body->print(indent + 2);
+    }
+
+    print_indent(indent + 1);
+    std::cout << "[Condition]\n";
+    if (cond) {
+      cond->print(indent + 2);
     }
   }
 };
