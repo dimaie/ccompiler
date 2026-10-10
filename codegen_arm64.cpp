@@ -33,7 +33,7 @@ DataType ARM64CodeGenerator::get_var_type(const std::string &name) const {
 }
 
 void ARM64CodeGenerator::generate(const ProgramNode &program,
-                                  std::ostream &out) {
+                                   std::ostream &out) {
   out_ = &out;
   var_offsets_.clear();
   var_types_.clear();
@@ -42,27 +42,143 @@ void ARM64CodeGenerator::generate(const ProgramNode &program,
   break_stack_.clear();
   continue_stack_.clear();
 
+  bool has_func_defs = false;
+  bool has_main_func = false;
+  std::vector<const ASTNode *> non_func_stmts;
+  for (const auto &stmt : program.statements) {
+    if (stmt) {
+      if (stmt->getType() == ASTNodeType::FuncDef) {
+        has_func_defs = true;
+        const auto *f = static_cast<const FuncDefNode *>(stmt.get());
+        if (f->name == "main") {
+          has_main_func = true;
+        }
+      } else {
+        non_func_stmts.push_back(stmt.get());
+      }
+    }
+  }
+
   emit_raw("// ================================================================");
   emit_raw("// ARM64 (AArch64) Assembly for Raspberry Pi (ARMv8-A)");
   emit_raw("// ABI: AAPCS64, x0 return/accumulator, x29 frame pointer");
   emit_raw("// ================================================================");
   emit_raw(".arch armv8-a");
   emit_raw(".text");
-  emit_raw(".globl main");
-  emit_raw(".type main, %function");
-  emit_raw("main:");
 
-  // Prologue: Allocate 64 bytes (16-byte aligned) & save frame pointer + link register
+  if (!has_func_defs) {
+    ret_label_ = ".Lmain_arm_ret";
+    emit_raw(".globl main");
+    emit_raw(".type main, %function");
+    emit_raw("main:");
+
+    // Prologue: Allocate 64 bytes (16-byte aligned) & save frame pointer + link register
+    emit_line("stp x29, x30, [sp, -64]!    // save FP and LR, alloc frame");
+    emit_line("mov x29, sp                 // set frame pointer");
+
+    program.accept(*this);
+
+    // Epilogue: Restore frame and return
+    emit_raw(ret_label_ + ":");
+    emit_line("mov sp, x29                 // restore stack pointer");
+    emit_line("ldp x29, x30, [sp], 64      // restore FP and LR, dealloc frame");
+    emit_line("ret");
+    return;
+  }
+
+  for (const auto &stmt : program.statements) {
+    if (stmt && stmt->getType() == ASTNodeType::FuncDef) {
+      stmt->accept(*this);
+    }
+  }
+
+  if (!has_main_func && !non_func_stmts.empty()) {
+    var_offsets_.clear();
+    var_types_.clear();
+    current_offset_ = 8;
+    ret_label_ = ".Lmain_arm_ret";
+    emit_raw(".globl main");
+    emit_raw(".type main, %function");
+    emit_raw("main:");
+
+    emit_line("stp x29, x30, [sp, -64]!    // save FP and LR, alloc frame");
+    emit_line("mov x29, sp                 // set frame pointer");
+
+    for (const auto *stmt : non_func_stmts) {
+      stmt->accept(*this);
+    }
+
+    emit_raw(ret_label_ + ":");
+    emit_line("mov sp, x29                 // restore stack pointer");
+    emit_line("ldp x29, x30, [sp], 64      // restore FP and LR, dealloc frame");
+    emit_line("ret");
+  }
+}
+
+void ARM64CodeGenerator::visit(const FuncDefNode &node) {
+  var_offsets_.clear();
+  var_types_.clear();
+  current_offset_ = 8;
+  break_stack_.clear();
+  continue_stack_.clear();
+
+  std::string prev_ret_label = ret_label_;
+  ret_label_ = ".L" + node.name + "_arm_ret";
+
+  emit_raw(".globl " + node.name);
+  emit_raw(".type " + node.name + ", %function");
+  emit_raw(node.name + ":");
   emit_line("stp x29, x30, [sp, -64]!    // save FP and LR, alloc frame");
   emit_line("mov x29, sp                 // set frame pointer");
 
-  program.accept(*this);
+  static const char *const ARG_REGS[] = {
+      "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"};
 
-  // Epilogue: Restore frame and return
+  for (size_t i = 0; i < node.params.size(); ++i) {
+    if (i < 8) {
+      const auto &p = node.params[i];
+      var_types_[p.name] = p.type;
+      int offset = get_var_offset(p.name);
+      emit_line("str " + std::string(ARG_REGS[i]) + ", [x29, #" +
+                std::to_string(offset) + "]");
+    } else {
+      unsupported(node, "more than 8 function parameters");
+    }
+  }
+
+  if (node.body) {
+    node.body->accept(*this);
+  }
+
   emit_raw(ret_label_ + ":");
   emit_line("mov sp, x29                 // restore stack pointer");
   emit_line("ldp x29, x30, [sp], 64      // restore FP and LR, dealloc frame");
   emit_line("ret");
+
+  ret_label_ = prev_ret_label;
+}
+
+void ARM64CodeGenerator::visit(const CallNode &node) {
+  if (node.args.size() > 8) {
+    unsupported(node, "more than 8 function call arguments");
+  }
+
+  for (const auto &arg : node.args) {
+    if (arg) {
+      arg->accept(*this);
+    } else {
+      emit_line("mov x0, #0");
+    }
+    emit_line("str x0, [sp, -16]!");
+  }
+
+  static const char *const ARG_REGS[] = {
+      "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"};
+  for (int i = static_cast<int>(node.args.size()) - 1; i >= 0; --i) {
+    emit_line("ldr " + std::string(ARG_REGS[i]) + ", [sp], 16");
+  }
+
+  emit_line("bl " + node.callee);
 }
 
 void ARM64CodeGenerator::visit(const ProgramNode &node) {

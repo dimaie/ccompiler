@@ -160,8 +160,11 @@ std::unique_ptr<GotoNode> Parser::parse_goto() {
 
 std::unique_ptr<ReturnNode> Parser::parse_return() {
   Token t = expect(TOK_KW_RETURN, "Expected 'return'");
-  auto expr = parse_expr();
-  expect(TOK_SEMICOLON, "Expected ';' after return expression");
+  std::unique_ptr<ASTNode> expr = nullptr;
+  if (peek().type != TOK_SEMICOLON) {
+    expr = parse_expr();
+  }
+  expect(TOK_SEMICOLON, "Expected ';' after return");
   return std::make_unique<ReturnNode>(t.line, std::move(expr));
 }
 
@@ -169,7 +172,7 @@ std::unique_ptr<ASTNode> Parser::parse_statement() {
   Token t = peek();
 
   if (is_type_specifier(t.type)) {
-    return parse_var_decl();
+    return parse_declaration();
   }
   if (t.type == TOK_KW_FOR) {
     return parse_for();

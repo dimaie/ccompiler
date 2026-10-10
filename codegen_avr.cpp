@@ -32,13 +32,114 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
   break_stack_.clear();
   continue_stack_.clear();
 
+  bool has_func_defs = false;
+  bool has_main_func = false;
+  std::vector<const ASTNode *> non_func_stmts;
+  for (const auto &stmt : program.statements) {
+    if (stmt) {
+      if (stmt->getType() == ASTNodeType::FuncDef) {
+        has_func_defs = true;
+        const auto *f = static_cast<const FuncDefNode *>(stmt.get());
+        if (f->name == "main") {
+          has_main_func = true;
+        }
+      } else {
+        non_func_stmts.push_back(stmt.get());
+      }
+    }
+  }
+
   emit_raw("; ================================================================");
   emit_raw("; AVR Assembly generated for ATmega328P (Arduino UNO)");
   emit_raw("; ABI: 16-bit ints, r24:r25 accumulator/return, Y (r28:r29) frame");
   emit_raw("; ================================================================");
   emit_raw(".arch atmega328p");
-  emit_raw(".global main");
-  emit_raw("main:");
+
+  if (!has_func_defs) {
+    ret_label_ = ".Lmain_avr_ret";
+    emit_raw(".global main");
+    emit_raw("main:");
+
+    // Prologue: Save Y frame pointer and set up stack frame (32 bytes)
+    emit_line("push r28");
+    emit_line("push r29");
+    emit_line("in r28, 0x3d        ; SPL");
+    emit_line("in r29, 0x3e        ; SPH");
+    emit_line("sbiw r28, 32        ; allocate 32-byte local stack frame");
+    emit_line("in r0, 0x3f         ; SREG");
+    emit_line("cli");
+    emit_line("out 0x3e, r29       ; update SPH");
+    emit_line("out 0x3f, r0        ; restore SREG");
+    emit_line("out 0x3d, r28       ; update SPL");
+
+    program.accept(*this);
+
+    // Epilogue: Restore stack and frame pointer, then return
+    emit_raw(ret_label_ + ":");
+    emit_line("adiw r28, 32        ; free stack frame");
+    emit_line("in r0, 0x3f");
+    emit_line("cli");
+    emit_line("out 0x3e, r29");
+    emit_line("out 0x3f, r0");
+    emit_line("out 0x3d, r28");
+    emit_line("pop r29");
+    emit_line("pop r28");
+    emit_line("ret");
+    return;
+  }
+
+  for (const auto &stmt : program.statements) {
+    if (stmt && stmt->getType() == ASTNodeType::FuncDef) {
+      stmt->accept(*this);
+    }
+  }
+
+  if (!has_main_func && !non_func_stmts.empty()) {
+    var_offsets_.clear();
+    current_offset_ = 0;
+    ret_label_ = ".Lmain_avr_ret";
+    emit_raw(".global main");
+    emit_raw("main:");
+
+    emit_line("push r28");
+    emit_line("push r29");
+    emit_line("in r28, 0x3d        ; SPL");
+    emit_line("in r29, 0x3e        ; SPH");
+    emit_line("sbiw r28, 32        ; allocate 32-byte local stack frame");
+    emit_line("in r0, 0x3f         ; SREG");
+    emit_line("cli");
+    emit_line("out 0x3e, r29       ; update SPH");
+    emit_line("out 0x3f, r0        ; restore SREG");
+    emit_line("out 0x3d, r28       ; update SPL");
+
+    for (const auto *stmt : non_func_stmts) {
+      stmt->accept(*this);
+    }
+
+    emit_raw(ret_label_ + ":");
+    emit_line("adiw r28, 32        ; free stack frame");
+    emit_line("in r0, 0x3f");
+    emit_line("cli");
+    emit_line("out 0x3e, r29");
+    emit_line("out 0x3f, r0");
+    emit_line("out 0x3d, r28");
+    emit_line("pop r29");
+    emit_line("pop r28");
+    emit_line("ret");
+  }
+}
+
+void AVRCodeGenerator::visit(const FuncDefNode &node) {
+  var_offsets_.clear();
+  current_offset_ = 0;
+  break_stack_.clear();
+  continue_stack_.clear();
+
+  std::string prev_ret_label = ret_label_;
+  ret_label_ = ".L" + node.name + "_avr_ret";
+
+  emit_raw(".global " + node.name);
+  emit_raw(node.name + ":");
 
   // Prologue: Save Y frame pointer and set up stack frame (32 bytes)
   emit_line("push r28");
@@ -52,7 +153,27 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
   emit_line("out 0x3f, r0        ; restore SREG");
   emit_line("out 0x3d, r28       ; update SPL");
 
-  program.accept(*this);
+  static const std::pair<const char *, const char *> ARG_REGS[] = {
+      {"r24", "r25"}, {"r22", "r23"}, {"r20", "r21"}, {"r18", "r19"}};
+
+  for (size_t i = 0; i < node.params.size(); ++i) {
+    if (i < 4) {
+      const auto &p = node.params[i];
+      if (p.type == DataType::Long || p.type == DataType::LongLong) {
+        unsupported(node, "type modifier 'long' on AVR parameter");
+      }
+      int offset = get_var_offset(p.name);
+      emit_line("std Y+" + std::to_string(offset) + ", " + ARG_REGS[i].first);
+      emit_line("std Y+" + std::to_string(offset + 1) + ", " +
+                ARG_REGS[i].second);
+    } else {
+      unsupported(node, "more than 4 function parameters on AVR");
+    }
+  }
+
+  if (node.body) {
+    node.body->accept(*this);
+  }
 
   // Epilogue: Restore stack and frame pointer, then return
   emit_raw(ret_label_ + ":");
@@ -65,6 +186,35 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
   emit_line("pop r29");
   emit_line("pop r28");
   emit_line("ret");
+
+  ret_label_ = prev_ret_label;
+}
+
+void AVRCodeGenerator::visit(const CallNode &node) {
+  if (node.args.size() > 4) {
+    unsupported(node, "more than 4 function call arguments on AVR");
+  }
+
+  for (const auto &arg : node.args) {
+    if (arg) {
+      arg->accept(*this);
+    } else {
+      emit_line("ldi r24, 0");
+      emit_line("ldi r25, 0");
+    }
+    emit_line("push r24");
+    emit_line("push r25");
+  }
+
+  static const std::pair<const char *, const char *> ARG_REGS[] = {
+      {"r24", "r25"}, {"r22", "r23"}, {"r20", "r21"}, {"r18", "r19"}};
+
+  for (int i = static_cast<int>(node.args.size()) - 1; i >= 0; --i) {
+    emit_line(std::string("pop ") + ARG_REGS[i].second);
+    emit_line(std::string("pop ") + ARG_REGS[i].first);
+  }
+
+  emit_line("call " + node.callee);
 }
 
 void AVRCodeGenerator::visit(const ProgramNode &node) {

@@ -57,6 +57,14 @@ void ICodeGenerator::visit(const VarDeclNode &node) {
   unsupported(node, "variable declaration");
 }
 
+void ICodeGenerator::visit(const FuncDefNode &node) {
+  unsupported(node, "function definition");
+}
+
+void ICodeGenerator::visit(const CallNode &node) {
+  unsupported(node, "function call");
+}
+
 void ICodeGenerator::visit(const IfNode &node) {
   unsupported(node, "if statement");
 }

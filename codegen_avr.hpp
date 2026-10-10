@@ -22,6 +22,8 @@ public:
   void visit(const ProgramNode &node) override;
   void visit(const CompoundNode &node) override;
   void visit(const VarDeclNode &node) override;
+  void visit(const FuncDefNode &node) override;
+  void visit(const CallNode &node) override;
   void visit(const IfNode &node) override;
   void visit(const ForNode &node) override;
   void visit(const WhileNode &node) override;

@@ -549,6 +549,131 @@ static void test_unsupported_features() {
   }
 }
 
+static void test_functions_codegen() {
+  std::cout << "Testing Function Definitions & Calls Code Generation...\n";
+
+  const char *src =
+      "int add(int a, int b) {\n"
+      "  return a + b;\n"
+      "}\n"
+      "int main() {\n"
+      "  return add(2, 3);\n"
+      "}\n";
+
+  // 1. x86_64
+  {
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse(src);
+    std::string asm_code = gen->generate_to_string(*prog);
+
+    assert(asm_code.find(".globl add") != std::string::npos);
+    assert(asm_code.find("add:") != std::string::npos);
+    assert(asm_code.find(".globl main") != std::string::npos);
+    assert(asm_code.find("main:") != std::string::npos);
+    assert(asm_code.find("call add") != std::string::npos);
+    assert(asm_code.find("leave") != std::string::npos);
+    assert(asm_code.find("ret") != std::string::npos);
+
+    // Test recursive function (factorial)
+    const char *fact_src =
+        "int fact(int n) {\n"
+        "  if (n <= 1) return 1;\n"
+        "  return n * fact(n - 1);\n"
+        "}\n"
+        "int main() {\n"
+        "  return fact(5);\n"
+        "}\n";
+    auto fact_prog = parse(fact_src);
+    std::string fact_asm = gen->generate_to_string(*fact_prog);
+    assert(fact_asm.find(".globl fact") != std::string::npos);
+    assert(fact_asm.find("call fact") != std::string::npos);
+
+    // Test > 6 args unsupported
+    auto bad_call = parse("return foo(1, 2, 3, 4, 5, 6, 7);\n");
+    bool threw = false;
+    try {
+      gen->generate_to_string(*bad_call);
+    } catch (const UnsupportedFeatureException &e) {
+      threw = true;
+      assert(e.get_arch() == "x86_64");
+    }
+    assert(threw);
+  }
+
+  // 2. ARM64
+  {
+    auto gen = CodeGeneratorFactory::create("arm64");
+    auto prog = parse(src);
+    std::string asm_code = gen->generate_to_string(*prog);
+
+    assert(asm_code.find(".globl add") != std::string::npos);
+    assert(asm_code.find("add:") != std::string::npos);
+    assert(asm_code.find(".globl main") != std::string::npos);
+    assert(asm_code.find("main:") != std::string::npos);
+    assert(asm_code.find("bl add") != std::string::npos);
+    assert(asm_code.find("ret") != std::string::npos);
+
+    // Test > 8 args unsupported
+    auto bad_call = parse("return foo(1, 2, 3, 4, 5, 6, 7, 8, 9);\n");
+    bool threw = false;
+    try {
+      gen->generate_to_string(*bad_call);
+    } catch (const UnsupportedFeatureException &e) {
+      threw = true;
+      assert(e.get_arch() == "arm64");
+    }
+    assert(threw);
+  }
+
+  // 3. AVR
+  {
+    auto gen = CodeGeneratorFactory::create("avr");
+    auto prog = parse(src);
+    std::string asm_code = gen->generate_to_string(*prog);
+
+    assert(asm_code.find(".global add") != std::string::npos);
+    assert(asm_code.find("add:") != std::string::npos);
+    assert(asm_code.find(".global main") != std::string::npos);
+    assert(asm_code.find("main:") != std::string::npos);
+    assert(asm_code.find("call add") != std::string::npos);
+    assert(asm_code.find("ret") != std::string::npos);
+
+    // Test > 4 args unsupported
+    auto bad_call = parse("return foo(1, 2, 3, 4, 5);\n");
+    bool threw = false;
+    try {
+      gen->generate_to_string(*bad_call);
+    } catch (const UnsupportedFeatureException &e) {
+      threw = true;
+      assert(e.get_arch() == "avr");
+    }
+    assert(threw);
+  }
+
+  // 4. C Transpiler
+  {
+    auto gen = CodeGeneratorFactory::create("c");
+    auto prog = parse(src);
+    std::string c_code = gen->generate_to_string(*prog);
+
+    assert(c_code.find("int add(int a, int b)") != std::string::npos);
+    assert(c_code.find("int main(void)") != std::string::npos);
+    assert(c_code.find("add(2, 3)") != std::string::npos);
+
+    // Test script-style with function def
+    const char *script_src =
+        "int square(int x) {\n"
+        "  return x * x;\n"
+        "}\n"
+        "return square(4);\n";
+    auto script_prog = parse(script_src);
+    std::string script_c = gen->generate_to_string(*script_prog);
+    assert(script_c.find("int square(int x)") != std::string::npos);
+    assert(script_c.find("int main(void)") != std::string::npos);
+    assert(script_c.find("return square(4);") != std::string::npos);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Code Generator Test Suite\n";
@@ -560,9 +685,10 @@ int main() {
   test_avr_codegen();
   test_c_codegen();
   test_unsupported_features();
+  test_functions_codegen();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL CODEGEN TESTS PASSED! (6/6)\n";
+  std::cout << "  ALL CODEGEN TESTS PASSED! (7/7)\n";
   std::cout << "========================================\n";
   return 0;
 }

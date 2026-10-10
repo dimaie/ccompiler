@@ -17,7 +17,8 @@ program
     ::= statement* EOF ;
 
 statement
-    ::= var_decl
+    ::= func_def
+      | var_decl
       | if_stmt
       | for_stmt
       | while_stmt
@@ -32,11 +33,21 @@ statement
       | expr_stmt
       | empty_stmt ;
 
+func_def
+    ::= type_specifier IDENTIFIER "(" ( "void" | param_list )? ")" compound_stmt ;
+
+param_list
+    ::= param ( "," param )* ;
+
+param
+    ::= type_specifier IDENTIFIER ;
+
 var_decl
     ::= type_specifier IDENTIFIER ( "=" expr )? ";" ;
 
 type_specifier
-    ::= "int"
+    ::= "void"
+      | "int"
       | "short" ( "int" )?
       | "long" ( "long" )? ( "int" )? ;
 
@@ -71,7 +82,7 @@ label_stmt
     ::= IDENTIFIER ":" ;
 
 return_stmt
-    ::= "return" expr ";" ;
+    ::= "return" ( expr )? ";" ;
 
 compound_stmt
     ::= "{" statement* "}" ;
@@ -116,7 +127,7 @@ unary
       | primary ;
 
 primary
-    ::= IDENTIFIER
+    ::= IDENTIFIER ( "(" ( expr ( "," expr )* )? ")" )?
       | INT_LIT
       | "(" expr ")" ;
 ```

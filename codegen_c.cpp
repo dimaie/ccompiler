@@ -10,10 +10,59 @@ void CCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
   out_ = &out;
   indent_ = 0;
 
-  *out_ << "int main(void) {\n";
-  indent_ = 1;
-  program.accept(*this);
-  *out_ << "}\n";
+  bool has_func_defs = false;
+  bool has_main_func = false;
+  std::vector<const ASTNode *> non_func_stmts;
+  for (const auto &stmt : program.statements) {
+    if (stmt) {
+      if (stmt->getType() == ASTNodeType::FuncDef) {
+        has_func_defs = true;
+        const auto *f = static_cast<const FuncDefNode *>(stmt.get());
+        if (f->name == "main") {
+          has_main_func = true;
+        }
+      } else {
+        non_func_stmts.push_back(stmt.get());
+      }
+    }
+  }
+
+  if (!has_func_defs) {
+    *out_ << "int main(void) {\n";
+    indent_ = 1;
+    program.accept(*this);
+    *out_ << "}\n";
+    return;
+  }
+
+  for (const auto &stmt : program.statements) {
+    if (stmt && stmt->getType() == ASTNodeType::FuncDef) {
+      stmt->accept(*this);
+    }
+  }
+
+  if (!has_main_func && !non_func_stmts.empty()) {
+    *out_ << "int main(void) {\n";
+    indent_ = 1;
+    for (const auto *stmt : non_func_stmts) {
+      print_indent();
+      stmt->accept(*this);
+      if (stmt->getType() != ASTNodeType::Compound &&
+          stmt->getType() != ASTNodeType::If &&
+          stmt->getType() != ASTNodeType::For &&
+          stmt->getType() != ASTNodeType::While &&
+          stmt->getType() != ASTNodeType::DoWhile &&
+          stmt->getType() != ASTNodeType::Switch &&
+          stmt->getType() != ASTNodeType::Label &&
+          stmt->getType() != ASTNodeType::FuncDef) {
+        *out_ << ";\n";
+      } else {
+        *out_ << "\n";
+      }
+    }
+    indent_ = 0;
+    *out_ << "}\n";
+  }
 }
 
 void CCodeGenerator::visit(const ProgramNode &node) {
@@ -27,13 +76,46 @@ void CCodeGenerator::visit(const ProgramNode &node) {
           stmt->getType() != ASTNodeType::While &&
           stmt->getType() != ASTNodeType::DoWhile &&
           stmt->getType() != ASTNodeType::Switch &&
-          stmt->getType() != ASTNodeType::Label) {
+          stmt->getType() != ASTNodeType::Label &&
+          stmt->getType() != ASTNodeType::FuncDef) {
         *out_ << ";\n";
       } else {
         *out_ << "\n";
       }
     }
   }
+}
+
+void CCodeGenerator::visit(const FuncDefNode &node) {
+  *out_ << data_type_str(node.return_type) << " " << node.name << "(";
+  if (node.params.empty()) {
+    *out_ << "void";
+  } else {
+    for (size_t i = 0; i < node.params.size(); ++i) {
+      if (i > 0) {
+        *out_ << ", ";
+      }
+      *out_ << data_type_str(node.params[i].type) << " " << node.params[i].name;
+    }
+  }
+  *out_ << ") ";
+  if (node.body) {
+    node.body->accept(*this);
+  }
+  *out_ << "\n";
+}
+
+void CCodeGenerator::visit(const CallNode &node) {
+  *out_ << node.callee << "(";
+  for (size_t i = 0; i < node.args.size(); ++i) {
+    if (i > 0) {
+      *out_ << ", ";
+    }
+    if (node.args[i]) {
+      node.args[i]->accept(*this);
+    }
+  }
+  *out_ << ")";
 }
 
 void CCodeGenerator::visit(const CompoundNode &node) {
@@ -49,7 +131,8 @@ void CCodeGenerator::visit(const CompoundNode &node) {
           stmt->getType() != ASTNodeType::While &&
           stmt->getType() != ASTNodeType::DoWhile &&
           stmt->getType() != ASTNodeType::Switch &&
-          stmt->getType() != ASTNodeType::Label) {
+          stmt->getType() != ASTNodeType::Label &&
+          stmt->getType() != ASTNodeType::FuncDef) {
         *out_ << ";\n";
       } else {
         *out_ << "\n";

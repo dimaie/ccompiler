@@ -818,6 +818,111 @@ static void test_lexer_peek() {
   }
 }
 
+static void test_func_def_node() {
+  std::cout << "Testing FuncDefNode...\n";
+
+  // Function with no params
+  {
+    auto prog = parse_source("int foo() { return 1; }\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::FuncDef);
+    auto *func = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(func->return_type == DataType::Int);
+    assert(func->name == "foo");
+    assert(func->params.empty());
+    assert(func->body != nullptr);
+    assert(func->body->statements.size() == 1);
+  }
+
+  // Function with (void) params
+  {
+    auto prog = parse_source("int bar(void) { return 2; }\n");
+    assert(prog->statements.size() == 1);
+    auto *func = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(func->name == "bar");
+    assert(func->params.empty());
+  }
+
+  // Void function with empty return
+  {
+    auto prog = parse_source("void baz() { return; }\n");
+    assert(prog->statements.size() == 1);
+    auto *func = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(func->return_type == DataType::Void);
+    assert(func->name == "baz");
+    assert(func->params.empty());
+    assert(func->body->statements.size() == 1);
+    assert(func->body->statements[0]->getType() == ASTNodeType::Return);
+    auto *ret = static_cast<ReturnNode *>(func->body->statements[0].get());
+    assert(ret->expr == nullptr);
+  }
+
+  // Function with multiple parameters and various types
+  {
+    auto prog = parse_source("long add(int a, short b, long c) { return a + b + c; }\n");
+    assert(prog->statements.size() == 1);
+    auto *func = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(func->return_type == DataType::Long);
+    assert(func->name == "add");
+    assert(func->params.size() == 3);
+    assert(func->params[0].type == DataType::Int && func->params[0].name == "a");
+    assert(func->params[1].type == DataType::Short && func->params[1].name == "b");
+    assert(func->params[2].type == DataType::Long && func->params[2].name == "c");
+  }
+
+  // Error: Parameter of type void
+  {
+    bool threw = false;
+    try {
+      parse_source("int bad(void x) { return 0; }\n");
+    } catch (const ParseException &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+
+  // Error: Variable of type void
+  {
+    bool threw = false;
+    try {
+      parse_source("void bad_var;\n");
+    } catch (const ParseException &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+}
+
+static void test_call_node() {
+  std::cout << "Testing CallNode...\n";
+
+  // Call with 0 args
+  {
+    auto prog = parse_source("int x = foo();\n");
+    assert(prog->statements.size() == 1);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->init != nullptr);
+    assert(var->init->getType() == ASTNodeType::Call);
+    auto *call = static_cast<CallNode *>(var->init.get());
+    assert(call->callee == "foo");
+    assert(call->args.empty());
+  }
+
+  // Call with multiple args and expressions
+  {
+    auto prog = parse_source("return add(1, 2 + 3, foo());\n");
+    assert(prog->statements.size() == 1);
+    auto *ret = static_cast<ReturnNode *>(prog->statements[0].get());
+    assert(ret->expr->getType() == ASTNodeType::Call);
+    auto *call = static_cast<CallNode *>(ret->expr.get());
+    assert(call->callee == "add");
+    assert(call->args.size() == 3);
+    assert(call->args[0]->getType() == ASTNodeType::IntLit);
+    assert(call->args[1]->getType() == ASTNodeType::BinaryOp);
+    assert(call->args[2]->getType() == ASTNodeType::Call);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running AST & Parser Test Suite\n";
@@ -844,9 +949,11 @@ int main() {
   test_syntax_errors();
   test_token_names();
   test_lexer_peek();
+  test_func_def_node();
+  test_call_node();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (21/21)\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (23/23)\n";
   std::cout << "========================================\n";
   return 0;
 }

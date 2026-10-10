@@ -36,6 +36,21 @@ std::unique_ptr<ASTNode> Parser::parse_primary() {
   }
   if (t.type == TOK_IDENTIFIER) {
     lexer_->next();
+    if (peek().type == TOK_LPAREN) {
+      expect(TOK_LPAREN, "Expected '(' after function name");
+      std::vector<std::unique_ptr<ASTNode>> args;
+      if (peek().type != TOK_RPAREN) {
+        while (true) {
+          args.push_back(parse_expr());
+          if (match(TOK_COMMA)) {
+            continue;
+          }
+          break;
+        }
+      }
+      expect(TOK_RPAREN, "Expected ')' after function arguments");
+      return std::make_unique<CallNode>(t.line, t.text, std::move(args));
+    }
     return std::make_unique<IdentifierNode>(t.line, t.text);
   }
   if (t.type == TOK_LPAREN) {

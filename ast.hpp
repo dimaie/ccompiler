@@ -12,6 +12,8 @@ enum class ASTNodeType {
   Program,
   Compound,
   VarDecl,
+  FuncDef,
+  Call,
   If,
   For,
   While,
@@ -31,6 +33,7 @@ enum class ASTNodeType {
 };
 
 enum class DataType {
+  Void,
   Int,
   Short,
   Long,
@@ -39,6 +42,8 @@ enum class DataType {
 
 inline const char *data_type_str(DataType type) {
   switch (type) {
+  case DataType::Void:
+    return "void";
   case DataType::Short:
     return "short";
   case DataType::Long:
@@ -94,6 +99,8 @@ inline const char *token_op_str(TokenType op) {
 class ProgramNode;
 class CompoundNode;
 class VarDeclNode;
+class FuncDefNode;
+class CallNode;
 class IfNode;
 class ForNode;
 class WhileNode;
@@ -121,6 +128,8 @@ public:
   virtual void visit(const ProgramNode &node) = 0;
   virtual void visit(const CompoundNode &node) = 0;
   virtual void visit(const VarDeclNode &node) = 0;
+  virtual void visit(const FuncDefNode &node) = 0;
+  virtual void visit(const CallNode &node) = 0;
   virtual void visit(const IfNode &node) = 0;
   virtual void visit(const ForNode &node) = 0;
   virtual void visit(const WhileNode &node) = 0;
@@ -233,6 +242,43 @@ public:
     std::cout << "VarDecl (" << data_type_str(data_type) << " " << name << ")\n";
     if (init) {
       init->print(indent + 1);
+    }
+  }
+};
+
+struct Param {
+  DataType type;
+  std::string name;
+  int line{0};
+};
+
+class FuncDefNode : public ASTNode {
+public:
+  DataType return_type;
+  std::string name;
+  std::vector<Param> params;
+  std::unique_ptr<CompoundNode> body;
+
+  FuncDefNode(int line, DataType return_type, std::string name,
+              std::vector<Param> params, std::unique_ptr<CompoundNode> body)
+      : ASTNode(line), return_type(return_type), name(std::move(name)),
+        params(std::move(params)), body(std::move(body)) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::FuncDef; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    std::cout << "FuncDef: " << data_type_str(return_type) << " " << name << "(";
+    for (size_t i = 0; i < params.size(); ++i) {
+      if (i > 0) {
+        std::cout << ", ";
+      }
+      std::cout << data_type_str(params[i].type) << " " << params[i].name;
+    }
+    std::cout << ")\n";
+    if (body) {
+      body->print(indent + 1);
     }
   }
 };
@@ -622,6 +668,29 @@ public:
   void print(int indent = 0) const override {
     print_indent(indent);
     std::cout << "Ident: " << name << "\n";
+  }
+};
+
+class CallNode : public ASTNode {
+public:
+  std::string callee;
+  std::vector<std::unique_ptr<ASTNode>> args;
+
+  CallNode(int line, std::string callee,
+           std::vector<std::unique_ptr<ASTNode>> args)
+      : ASTNode(line), callee(std::move(callee)), args(std::move(args)) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::Call; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    std::cout << "Call (" << callee << ")\n";
+    for (const auto &arg : args) {
+      if (arg) {
+        arg->print(indent + 1);
+      }
+    }
   }
 };
 
