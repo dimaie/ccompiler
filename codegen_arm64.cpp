@@ -32,6 +32,45 @@ DataType ARM64CodeGenerator::get_var_type(const std::string &name) const {
   return DataType::Int;
 }
 
+int ARM64CodeGenerator::get_type_size(DataType type, const std::string &st_name) const {
+  if (type == DataType::Struct || type == DataType::Union) {
+    auto it = struct_defs_.find(st_name);
+    if (it != struct_defs_.end()) {
+      return it->second.total_size > 0 ? it->second.total_size : 8;
+    }
+    return 8;
+  }
+  if (type == DataType::Short) return 2;
+  return 8;
+}
+
+std::string ARM64CodeGenerator::get_expr_struct_type(const ASTNode *expr) const {
+  if (!expr) return "";
+  if (expr->getType() == ASTNodeType::Identifier) {
+    auto it = var_struct_name_.find(static_cast<const IdentifierNode *>(expr)->name);
+    return it != var_struct_name_.end() ? it->second : "";
+  }
+  if (expr->getType() == ASTNodeType::MemberAccess) {
+    const auto *mem = static_cast<const MemberAccessNode *>(expr);
+    std::string parent_st = get_expr_struct_type(mem->object.get());
+    auto it = struct_defs_.find(parent_st);
+    if (it != struct_defs_.end()) {
+      auto mit = it->second.member_map.find(mem->member);
+      if (mit != it->second.member_map.end()) {
+        return mit->second.struct_name;
+      }
+    }
+    return "";
+  }
+  if (expr->getType() == ASTNodeType::UnaryOp) {
+    return get_expr_struct_type(static_cast<const UnaryOpNode *>(expr)->expr.get());
+  }
+  if (expr->getType() == ASTNodeType::ArrayAccess) {
+    return get_expr_struct_type(static_cast<const ArrayAccessNode *>(expr)->array.get());
+  }
+  return "";
+}
+
 static int compute_ast_frame_bytes(const ASTNode *node) {
   if (!node) return 0;
   int size = 0;
@@ -80,10 +119,19 @@ void ARM64CodeGenerator::generate(const ProgramNode &program,
   var_types_.clear();
   is_array_.clear();
   array_sizes_.clear();
+  is_func_ptr_.clear();
+  var_struct_name_.clear();
+  struct_defs_.clear();
   current_offset_ = 8; // offset 0 and 8 reserved for saved x29, x30
   label_counter_ = 0;
   break_stack_.clear();
   continue_stack_.clear();
+
+  for (const auto &stmt : program.statements) {
+    if (stmt && stmt->getType() == ASTNodeType::StructDef) {
+      stmt->accept(*this);
+    }
+  }
 
   bool has_func_defs = false;
   bool has_main_func = false;
@@ -288,10 +336,29 @@ void ARM64CodeGenerator::visit(const VarDeclNode &node) {
   if (node.is_func_ptr) {
     is_func_ptr_[node.name] = true;
   }
+  if (!node.struct_name.empty()) {
+    var_struct_name_[node.name] = node.struct_name;
+  }
+  if (node.pointer_level > 0 || (node.data_type != DataType::Struct && node.data_type != DataType::Union && !node.is_array)) {
+    int offset = get_var_offset(node.name);
+    if (node.init) {
+      node.init->accept(*this);
+      if (node.data_type == DataType::Short && node.pointer_level == 0 && !node.is_func_ptr) {
+        emit_line("strh w0, [x29, #" + std::to_string(offset) + "]");
+      } else {
+        emit_line("str x0, [x29, #" + std::to_string(offset) + "]");
+      }
+    }
+    return;
+  }
   if (node.is_array) {
     is_array_[node.name] = true;
     array_sizes_[node.name] = node.array_size;
-    int elem_size = (node.data_type == DataType::Short && node.pointer_level == 0) ? 2 : 8;
+    int elem_size = 8;
+    if (node.data_type == DataType::Short && node.pointer_level == 0) elem_size = 2;
+    else if (node.data_type == DataType::Struct || node.data_type == DataType::Union) {
+      elem_size = get_type_size(node.data_type, node.struct_name);
+    }
     int base_offset = current_offset_ + elem_size;
     current_offset_ += node.array_size * elem_size;
     var_offsets_[node.name] = base_offset;
@@ -302,7 +369,7 @@ void ARM64CodeGenerator::visit(const VarDeclNode &node) {
         if (init_list->elements[i]) {
           init_list->elements[i]->accept(*this);
           int elem_offset = base_offset + static_cast<int>(i) * elem_size;
-          if (node.data_type == DataType::Short && node.pointer_level == 0) {
+          if (elem_size == 2) {
             emit_line("strh w0, [x29, #" + std::to_string(elem_offset) + "]");
           } else {
             emit_line("str x0, [x29, #" + std::to_string(elem_offset) + "]");
@@ -311,13 +378,28 @@ void ARM64CodeGenerator::visit(const VarDeclNode &node) {
       }
     }
   } else {
-    int offset = get_var_offset(node.name);
+    int st_size = get_type_size(node.data_type, node.struct_name);
+    int base_offset = current_offset_ + 8;
+    current_offset_ += st_size;
+    var_offsets_[node.name] = base_offset;
     if (node.init) {
-      node.init->accept(*this);
-      if (node.data_type == DataType::Short && node.pointer_level == 0 && !node.is_func_ptr) {
-        emit_line("strh w0, [x29, #" + std::to_string(offset) + "]");
+      if (node.init->getType() == ASTNodeType::InitList) {
+        const auto *init_list = static_cast<const InitListNode *>(node.init.get());
+        const auto &st_info = struct_defs_[node.struct_name];
+        for (size_t i = 0; i < init_list->elements.size() && i < st_info.members.size(); ++i) {
+          if (init_list->elements[i]) {
+            init_list->elements[i]->accept(*this);
+            int elem_offset = base_offset + st_info.members[i].offset;
+            if (st_info.members[i].type == DataType::Short && st_info.members[i].pointer_level == 0) {
+              emit_line("strh w0, [x29, #" + std::to_string(elem_offset) + "]");
+            } else {
+              emit_line("str x0, [x29, #" + std::to_string(elem_offset) + "]");
+            }
+          }
+        }
       } else {
-        emit_line("str x0, [x29, #" + std::to_string(offset) + "]");
+        node.init->accept(*this);
+        emit_line("str x0, [x29, #" + std::to_string(base_offset) + "]");
       }
     }
   }
@@ -413,6 +495,55 @@ void ARM64CodeGenerator::visit(const AssignNode &node) {
     return;
   }
 
+  if (node.left->getType() == ASTNodeType::MemberAccess) {
+    auto *mem = static_cast<const MemberAccessNode *>(node.left.get());
+    std::string st_name = get_expr_struct_type(mem->object.get());
+    auto it = struct_defs_.find(st_name);
+    if (it == struct_defs_.end()) {
+      unsupported(node, "unknown struct type '" + st_name + "'");
+    }
+    auto mit = it->second.member_map.find(mem->member);
+    if (mit == it->second.member_map.end()) {
+      unsupported(node, "unknown member '" + mem->member + "' in struct '" + st_name + "'");
+    }
+    const auto &m = mit->second;
+
+    if (mem->is_arrow) {
+      if (node.right) {
+        node.right->accept(*this);
+      }
+      emit_line("str x0, [sp, -16]!");
+      mem->object->accept(*this);
+      if (m.offset > 0) {
+        emit_line("add x0, x0, #" + std::to_string(m.offset));
+      }
+      emit_line("mov x1, x0");
+      emit_line("ldr x0, [sp], 16");
+      if (m.type == DataType::Short && m.pointer_level == 0) {
+        emit_line("strh w0, [x1]");
+      } else {
+        emit_line("str x0, [x1]");
+      }
+      return;
+    } else {
+      if (mem->object->getType() == ASTNodeType::Identifier) {
+        auto *ident = static_cast<const IdentifierNode *>(mem->object.get());
+        int base_offset = get_var_offset(ident->name);
+        int mem_offset = base_offset + m.offset;
+        if (node.right) {
+          node.right->accept(*this);
+        }
+        if (m.type == DataType::Short && m.pointer_level == 0) {
+          emit_line("strh w0, [x29, #" + std::to_string(mem_offset) + "]");
+        } else {
+          emit_line("str x0, [x29, #" + std::to_string(mem_offset) + "]");
+        }
+        return;
+      }
+      unsupported(node, "complex member assignment");
+    }
+  }
+
   if (node.left->getType() != ASTNodeType::Identifier) {
     throw std::runtime_error("Left-hand side of assignment must be variable, array element, or dereference");
   }
@@ -495,10 +626,29 @@ void ARM64CodeGenerator::visit(const UnaryOpNode &node) {
       emit_line("add x0, x1, x2");
       return;
     }
-    if (node.expr->getType() == ASTNodeType::UnaryOp &&
-        static_cast<const UnaryOpNode *>(node.expr.get())->op == TOK_STAR) {
-      static_cast<const UnaryOpNode *>(node.expr.get())->expr->accept(*this);
-      return;
+    if (node.expr->getType() == ASTNodeType::MemberAccess) {
+      auto *mem = static_cast<const MemberAccessNode *>(node.expr.get());
+      std::string st_name = get_expr_struct_type(mem->object.get());
+      auto it = struct_defs_.find(st_name);
+      if (it == struct_defs_.end()) {
+        unsupported(node, "unknown struct type '" + st_name + "'");
+      }
+      const auto &m = it->second.member_map.at(mem->member);
+      if (mem->is_arrow) {
+        mem->object->accept(*this);
+        if (m.offset > 0) {
+          emit_line("add x0, x0, #" + std::to_string(m.offset));
+        }
+        return;
+      } else {
+        if (mem->object->getType() == ASTNodeType::Identifier) {
+          auto *ident = static_cast<const IdentifierNode *>(mem->object.get());
+          int base_offset = get_var_offset(ident->name);
+          int mem_offset = base_offset + m.offset;
+          emit_line("add x0, x29, #" + std::to_string(mem_offset));
+          return;
+        }
+      }
     }
     unsupported(node, "unsupported address-of expression");
   }
@@ -815,4 +965,86 @@ void ARM64CodeGenerator::visit(const ReturnNode &node) {
     node.expr->accept(*this);
   }
   emit_line("b " + ret_label_);
+}
+
+void ARM64CodeGenerator::visit(const StructDefNode &node) {
+  StructInfo info;
+  info.name = node.name;
+  info.is_union = node.is_union;
+  int offset = 0;
+  int max_size = 0;
+  for (const auto &m : node.members) {
+    MemberInfo mi;
+    mi.name = m.name;
+    mi.type = m.type;
+    mi.pointer_level = m.pointer_level;
+    mi.is_array = m.is_array;
+    mi.array_size = m.array_size;
+    mi.struct_name = m.struct_name;
+    mi.is_union = m.is_union;
+    int elem_size = (m.pointer_level > 0) ? 8 : get_type_size(m.type, m.struct_name);
+    mi.size = m.is_array ? (m.array_size * elem_size) : elem_size;
+    if (node.is_union) {
+      mi.offset = 0;
+      if (mi.size > max_size) max_size = mi.size;
+    } else {
+      mi.offset = offset;
+      offset += mi.size;
+      if (offset % 8 != 0) {
+        offset += 8 - (offset % 8);
+      }
+    }
+    info.members.push_back(mi);
+    info.member_map[mi.name] = mi;
+  }
+  if (node.is_union) {
+    if (max_size % 8 != 0) max_size += 8 - (max_size % 8);
+    info.total_size = max_size > 0 ? max_size : 8;
+  } else {
+    info.total_size = offset > 0 ? offset : 8;
+  }
+  if (!node.name.empty()) {
+    struct_defs_[node.name] = info;
+  }
+  if (node.var_decl) {
+    node.var_decl->accept(*this);
+  }
+}
+
+void ARM64CodeGenerator::visit(const MemberAccessNode &node) {
+  std::string st_name = get_expr_struct_type(node.object.get());
+  auto it = struct_defs_.find(st_name);
+  if (it == struct_defs_.end()) {
+    unsupported(node, "unknown struct type '" + st_name + "'");
+  }
+  auto mit = it->second.member_map.find(node.member);
+  if (mit == it->second.member_map.end()) {
+    unsupported(node, "unknown member '" + node.member + "' in struct '" + st_name + "'");
+  }
+  const auto &m = mit->second;
+
+  if (node.is_arrow) {
+    node.object->accept(*this);
+    if (m.offset > 0) {
+      emit_line("add x0, x0, #" + std::to_string(m.offset));
+    }
+    if (m.type == DataType::Short && m.pointer_level == 0) {
+      emit_line("ldrsh x0, [x0]");
+    } else {
+      emit_line("ldr x0, [x0]");
+    }
+  } else {
+    if (node.object->getType() == ASTNodeType::Identifier) {
+      auto *ident = static_cast<const IdentifierNode *>(node.object.get());
+      int base_offset = get_var_offset(ident->name);
+      int mem_offset = base_offset + m.offset;
+      if (m.type == DataType::Short && m.pointer_level == 0) {
+        emit_line("ldrsh x0, [x29, #" + std::to_string(mem_offset) + "]");
+      } else {
+        emit_line("ldr x0, [x29, #" + std::to_string(mem_offset) + "]");
+      }
+    } else {
+      unsupported(node, "complex member access");
+    }
+  }
 }

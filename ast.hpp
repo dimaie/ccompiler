@@ -31,7 +31,9 @@ enum class ASTNodeType {
   BinaryOp,
   UnaryOp,
   IntLit,
-  Identifier
+  Identifier,
+  StructDef,
+  MemberAccess
 };
 
 enum class DataType {
@@ -39,7 +41,9 @@ enum class DataType {
   Int,
   Short,
   Long,
-  LongLong
+  LongLong,
+  Struct,
+  Union
 };
 
 inline const char *data_type_str(DataType type) {
@@ -52,6 +56,10 @@ inline const char *data_type_str(DataType type) {
     return "long";
   case DataType::LongLong:
     return "long long";
+  case DataType::Struct:
+    return "struct";
+  case DataType::Union:
+    return "union";
   case DataType::Int:
   default:
     return "int";
@@ -123,6 +131,8 @@ class BinaryOpNode;
 class UnaryOpNode;
 class IntLitNode;
 class IdentifierNode;
+class StructDefNode;
+class MemberAccessNode;
 
 /**
  * @brief Abstract Visitor interface for AST operations (codegen, analysis, etc.)
@@ -154,6 +164,8 @@ public:
   virtual void visit(const UnaryOpNode &node) = 0;
   virtual void visit(const IntLitNode &node) = 0;
   virtual void visit(const IdentifierNode &node) = 0;
+  virtual void visit(const StructDefNode &node) = 0;
+  virtual void visit(const MemberAccessNode &node) = 0;
 };
 
 class ASTNode {
@@ -239,6 +251,7 @@ public:
   DataType func_ptr_ret_type{DataType::Int};
   int func_ptr_ret_pointer_level{0};
   std::vector<DataType> func_ptr_params;
+  std::string struct_name;
 
   VarDeclNode(int line, DataType data_type, std::string name,
               std::unique_ptr<ASTNode> init = nullptr)
@@ -267,11 +280,15 @@ public:
     if (is_func_ptr) {
       std::cout << "VarDecl (func_ptr " << name << ")\n";
     } else if (is_array) {
-      std::cout << "VarDecl (" << data_type_str(data_type);
+      std::cout << "VarDecl (";
+      if (!struct_name.empty()) std::cout << data_type_str(data_type) << " " << struct_name;
+      else std::cout << data_type_str(data_type);
       for (int i = 0; i < pointer_level; ++i) std::cout << "*";
       std::cout << " " << name << "[" << array_size << "])\n";
     } else {
-      std::cout << "VarDecl (" << data_type_str(data_type);
+      std::cout << "VarDecl (";
+      if (!struct_name.empty()) std::cout << data_type_str(data_type) << " " << struct_name;
+      else std::cout << data_type_str(data_type);
       for (int i = 0; i < pointer_level; ++i) std::cout << "*";
       std::cout << " " << name << ")\n";
     }
@@ -290,6 +307,7 @@ struct Param {
   DataType func_ptr_ret_type{DataType::Int};
   int func_ptr_ret_pointer_level{0};
   std::vector<DataType> func_ptr_params;
+  std::string struct_name;
 };
 
 class FuncDefNode : public ASTNode {
@@ -299,6 +317,7 @@ public:
   std::string name;
   std::vector<Param> params;
   std::unique_ptr<CompoundNode> body;
+  std::string return_struct_name;
 
   FuncDefNode(int line, DataType return_type, std::string name,
               std::vector<Param> params, std::unique_ptr<CompoundNode> body,
@@ -792,6 +811,73 @@ public:
       if (elem) {
         elem->print(indent + 1);
       }
+    }
+  }
+};
+
+struct StructMember {
+  DataType type{DataType::Int};
+  int pointer_level{0};
+  std::string name;
+  bool is_array{false};
+  int array_size{0};
+  std::string struct_name;
+  bool is_union{false};
+};
+
+class StructDefNode : public ASTNode {
+public:
+  bool is_union{false};
+  std::string name;
+  std::vector<StructMember> members;
+  std::unique_ptr<VarDeclNode> var_decl{nullptr};
+
+  StructDefNode(int line, bool is_union, std::string name,
+                std::vector<StructMember> members,
+                std::unique_ptr<VarDeclNode> var_decl = nullptr)
+      : ASTNode(line), is_union(is_union), name(std::move(name)),
+        members(std::move(members)), var_decl(std::move(var_decl)) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::StructDef; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    std::cout << (is_union ? "UnionDef (" : "StructDef (") << name << ")\n";
+    for (const auto &m : members) {
+      print_indent(indent + 1);
+      std::cout << "Member: " << data_type_str(m.type);
+      if (!m.struct_name.empty()) std::cout << " " << m.struct_name;
+      for (int i = 0; i < m.pointer_level; ++i) std::cout << "*";
+      std::cout << " " << m.name;
+      if (m.is_array) std::cout << "[" << m.array_size << "]";
+      std::cout << "\n";
+    }
+    if (var_decl) {
+      var_decl->print(indent + 1);
+    }
+  }
+};
+
+class MemberAccessNode : public ASTNode {
+public:
+  std::unique_ptr<ASTNode> object;
+  std::string member;
+  bool is_arrow{false};
+
+  MemberAccessNode(int line, std::unique_ptr<ASTNode> object,
+                   std::string member, bool is_arrow = false)
+      : ASTNode(line), object(std::move(object)), member(std::move(member)),
+        is_arrow(is_arrow) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::MemberAccess; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    std::cout << "MemberAccess (" << (is_arrow ? "->" : ".") << member << ")\n";
+    if (object) {
+      object->print(indent + 1);
     }
   }
 };

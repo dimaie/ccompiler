@@ -69,6 +69,14 @@ std::unique_ptr<ASTNode> Parser::parse_primary() {
       expect(TOK_RBRACKET, "Expected ']' after array index");
       expr = std::make_unique<ArrayAccessNode>(expr->line, std::move(expr),
                                                std::move(index));
+    } else if (match(TOK_DOT)) {
+      Token mem_tok = expect(TOK_IDENTIFIER, "Expected member name after '.'");
+      expr = std::make_unique<MemberAccessNode>(expr->line, std::move(expr),
+                                                mem_tok.text, false);
+    } else if (match(TOK_ARROW)) {
+      Token mem_tok = expect(TOK_IDENTIFIER, "Expected member name after '->'");
+      expr = std::make_unique<MemberAccessNode>(expr->line, std::move(expr),
+                                                mem_tok.text, true);
     } else if (peek().type == TOK_LPAREN) {
       expect(TOK_LPAREN, "Expected '(' after function pointer expression");
       std::vector<std::unique_ptr<ASTNode>> args;
@@ -128,10 +136,11 @@ std::unique_ptr<ASTNode> Parser::parse_assignment() {
   if (match(TOK_ASSIGN)) {
     bool valid_lvalue = (left->getType() == ASTNodeType::Identifier) ||
                         (left->getType() == ASTNodeType::ArrayAccess) ||
+                        (left->getType() == ASTNodeType::MemberAccess) ||
                         (left->getType() == ASTNodeType::UnaryOp &&
                          static_cast<const UnaryOpNode *>(left.get())->op == TOK_STAR);
     if (!valid_lvalue) {
-      parse_error(peek(), "Left side of assignment must be an identifier, array element, or dereference");
+      parse_error(peek(), "Left side of assignment must be an identifier, array element, member access, or dereference");
     }
     auto right = parse_assignment();
     return std::make_unique<AssignNode>(left->line, std::move(left),

@@ -40,6 +40,8 @@ public:
   void visit(const UnaryOpNode &node) override;
   void visit(const IntLitNode &node) override;
   void visit(const IdentifierNode &node) override;
+  void visit(const StructDefNode &node) override;
+  void visit(const MemberAccessNode &node) override;
 
 private:
   std::ostream *out_{nullptr};

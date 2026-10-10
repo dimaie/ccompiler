@@ -849,6 +849,109 @@ static void test_func_ptrs_codegen() {
   }
 }
 
+static void test_struct_codegen() {
+  std::cout << "Testing Structures Code Generation across all backends...\n";
+
+  const char *src =
+      "struct Point {\n"
+      "  int x;\n"
+      "  int y;\n"
+      "};\n"
+      "struct Point p = {10, 20};\n"
+      "struct Point *pp = &p;\n"
+      "p.x = 42;\n"
+      "pp->y = 99;\n"
+      "return p.x + pp->y;\n";
+
+  // 1. x86_64
+  {
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse(src);
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("movq") != std::string::npos);
+    assert(asm_code.find("leaq") != std::string::npos);
+  }
+
+  // 2. ARM64
+  {
+    auto gen = CodeGeneratorFactory::create("arm64");
+    auto prog = parse(src);
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("ldr x0, [x29, #") != std::string::npos);
+    assert(asm_code.find("str x0, [x29, #") != std::string::npos);
+    assert(asm_code.find("str x0, [x1]") != std::string::npos);
+  }
+
+  // 3. AVR
+  {
+    auto gen = CodeGeneratorFactory::create("avr");
+    auto prog = parse(src);
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("ldd r24, Y+") != std::string::npos);
+    assert(asm_code.find("std Y+") != std::string::npos);
+    assert(asm_code.find("st Z, r24") != std::string::npos);
+  }
+
+  // 4. C Transpiler
+  {
+    auto gen = CodeGeneratorFactory::create("c");
+    auto prog = parse(src);
+    std::string c_code = gen->generate_to_string(*prog);
+    assert(c_code.find("struct Point {") != std::string::npos);
+    assert(c_code.find("struct Point p = {10, 20};") != std::string::npos);
+    assert(c_code.find("struct Point *pp = &p;") != std::string::npos);
+    assert(c_code.find("p.x = 42;") != std::string::npos);
+    assert(c_code.find("pp->y = 99;") != std::string::npos);
+  }
+}
+
+static void test_union_codegen() {
+  std::cout << "Testing Unions Code Generation across all backends...\n";
+
+  const char *src =
+      "union Data {\n"
+      "  int i;\n"
+      "  short s;\n"
+      "};\n"
+      "union Data d;\n"
+      "d.i = 42;\n"
+      "return d.i;\n";
+
+  // 1. x86_64
+  {
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse(src);
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("movq") != std::string::npos);
+  }
+
+  // 2. ARM64
+  {
+    auto gen = CodeGeneratorFactory::create("arm64");
+    auto prog = parse(src);
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("str x0, [x29, #") != std::string::npos);
+  }
+
+  // 3. AVR
+  {
+    auto gen = CodeGeneratorFactory::create("avr");
+    auto prog = parse(src);
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("std Y+") != std::string::npos);
+  }
+
+  // 4. C Transpiler
+  {
+    auto gen = CodeGeneratorFactory::create("c");
+    auto prog = parse(src);
+    std::string c_code = gen->generate_to_string(*prog);
+    assert(c_code.find("union Data {") != std::string::npos);
+    assert(c_code.find("union Data d;") != std::string::npos);
+    assert(c_code.find("d.i = 42;") != std::string::npos);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Code Generator Test Suite\n";
@@ -864,9 +967,11 @@ int main() {
   test_arrays_codegen();
   test_pointers_codegen();
   test_func_ptrs_codegen();
+  test_struct_codegen();
+  test_union_codegen();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL CODEGEN TESTS PASSED! (10/10)\n";
+  std::cout << "  ALL CODEGEN TESTS PASSED! (12/12)\n";
   std::cout << "========================================\n";
   return 0;
 }

@@ -1195,6 +1195,93 @@ static void test_func_ptr_node() {
   }
 }
 
+static void test_struct_node() {
+  std::cout << "Testing Struct & Union Nodes (Definitions, Declarations, Member Access)...\n";
+
+  // 1. Standalone struct definition
+  {
+    auto prog = parse_source("struct Point { int x; int y; };\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::StructDef);
+    auto *st = static_cast<StructDefNode *>(prog->statements[0].get());
+    assert(st->name == "Point");
+    assert(st->is_union == false);
+    assert(st->members.size() == 2);
+    assert(st->members[0].name == "x");
+    assert(st->members[1].name == "y");
+    assert(st->var_decl == nullptr);
+  }
+
+  // 2. Struct variable declaration with initializer
+  {
+    auto prog = parse_source("struct Point p = {10, 20};\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::VarDecl);
+    auto *vd = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(vd->name == "p");
+    assert(vd->data_type == DataType::Struct);
+    assert(vd->struct_name == "Point");
+    assert(vd->init != nullptr);
+    assert(vd->init->getType() == ASTNodeType::InitList);
+    auto *il = static_cast<InitListNode *>(vd->init.get());
+    assert(il->elements.size() == 2);
+  }
+
+  // 3. Member access (. and ->) and assignment
+  {
+    auto prog = parse_source(
+        "struct Point p;\n"
+        "struct Point *pp = &p;\n"
+        "p.x = 42;\n"
+        "pp->y = 99;\n"
+        "int sum = p.x + pp->y;\n"
+        "return sum;\n");
+    assert(prog->statements.size() == 6);
+    // p.x = 42;
+    auto *as1 = static_cast<AssignNode *>(prog->statements[2].get());
+    assert(as1->left->getType() == ASTNodeType::MemberAccess);
+    auto *m1 = static_cast<MemberAccessNode *>(as1->left.get());
+    assert(m1->member == "x");
+    assert(m1->is_arrow == false);
+
+    // pp->y = 99;
+    auto *as2 = static_cast<AssignNode *>(prog->statements[3].get());
+    assert(as2->left->getType() == ASTNodeType::MemberAccess);
+    auto *m2 = static_cast<MemberAccessNode *>(as2->left.get());
+    assert(m2->member == "y");
+    assert(m2->is_arrow == true);
+  }
+
+  // 4. Union definition and access
+  {
+    auto prog = parse_source(
+        "union Value {\n"
+        "  int i;\n"
+        "  short s;\n"
+        "};\n"
+        "union Value v;\n"
+        "v.i = 100;\n"
+        "return v.i;\n");
+    assert(prog->statements.size() == 4);
+    assert(prog->statements[0]->getType() == ASTNodeType::StructDef);
+    auto *ud = static_cast<StructDefNode *>(prog->statements[0].get());
+    assert(ud->name == "Value");
+    assert(ud->is_union == true);
+    assert(ud->members.size() == 2);
+  }
+
+  // 5. Combined struct definition with variable declaration
+  {
+    auto prog = parse_source("struct Point { int x; int y; } p;\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::StructDef);
+    auto *st = static_cast<StructDefNode *>(prog->statements[0].get());
+    assert(st->name == "Point");
+    assert(st->var_decl != nullptr);
+    assert(st->var_decl->name == "p");
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running AST & Parser Test Suite\n";
@@ -1226,9 +1313,10 @@ int main() {
   test_array_node();
   test_pointer_node();
   test_func_ptr_node();
+  test_struct_node();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (26/26)\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (27/27)\n";
   std::cout << "========================================\n";
   return 0;
 }

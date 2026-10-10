@@ -18,6 +18,7 @@ program
 
 statement
     ::= func_def
+      | struct_def
       | var_decl
       | if_stmt
       | for_stmt
@@ -32,6 +33,12 @@ statement
       | compound_stmt
       | expr_stmt
       | empty_stmt ;
+
+struct_def
+    ::= ( "struct" | "union" ) ( IDENTIFIER )? "{" member_decl* "}" ( "*"\* IDENTIFIER ( "[" ( INT_LIT )? "]" )? ( "=" ( expr | init_list ) )? )? ";" ;
+
+member_decl
+    ::= type_specifier "*"\* IDENTIFIER ( "[" INT_LIT "]" )? ";" ;
 
 func_def
     ::= type_specifier "*"\* IDENTIFIER "(" ( "void" | param_list )? ")" compound_stmt ;
@@ -57,7 +64,8 @@ type_specifier
     ::= "void"
       | "int"
       | "short" ( "int" )?
-      | "long" ( "long" )? ( "int" )? ;
+      | "long" ( "long" )? ( "int" )?
+      | ( "struct" | "union" ) IDENTIFIER ;
 
 if_stmt
     ::= "if" "(" expr ")" statement ( "else" statement )? ;
@@ -109,12 +117,15 @@ expr
     ::= assignment ;
 
 assignment
-    ::= ( IDENTIFIER | array_access | deref_expr ) "=" assignment
+    ::= ( IDENTIFIER | array_access | member_access | deref_expr ) "=" assignment
       | logical_or ;
 
 deref_expr
     ::= "*" unary
       | "(" "*" unary ")" ;
+
+member_access
+    ::= primary ( "." | "->" ) IDENTIFIER ;
 
 array_access
     ::= IDENTIFIER "[" expr "]" ( "[" expr "]" )* ;
@@ -142,9 +153,12 @@ unary
       | primary ;
 
 primary
-    ::= IDENTIFIER ( "(" ( expr ( "," expr )* )? ")" | ( "[" expr "]" )+ )?
+    ::= primary_base ( "[" expr "]" | "." IDENTIFIER | "->" IDENTIFIER | "(" ( expr ( "," expr )* )? ")" )* ;
+
+primary_base
+    ::= IDENTIFIER
       | INT_LIT
-      | "(" expr ")" ( "(" ( expr ( "," expr )* )? ")" )? ;
+      | "(" expr ")" ;
 ```
 
 ---
@@ -155,7 +169,7 @@ Operators supported by the parser, ordered from highest to lowest precedence:
 
 | Precedence | Operator | Description | Associativity | AST Node Type |
 | :---: | :---: | :--- | :---: | :--- |
-| **1 (Highest)** | `( )` | Parenthesized expression | N/A | Evaluated first |
+| **1 (Highest)** | `( )`, `[ ]`, `.`, `->` | Function call, array subscript, structure/union member access | Left-to-right | `AST_CALL`, `AST_ARRAY_ACCESS`, `AST_MEMBER_ACCESS` |
 | **2** | `+`, `-`, `!`, `~`, `&`, `*` | Unary positive, negation, logical NOT, bitwise NOT, address-of, dereference | Right-to-left | `AST_UNARY_OP` |
 | **3** | `*`, `/`, `%` | Multiplication, division, modulo | Left-to-right | `AST_BINARY_OP` |
 | **4** | `+`, `-` | Addition, subtraction | Left-to-right | `AST_BINARY_OP` |
@@ -237,7 +251,7 @@ The parser maps the grammar into the following AST node representations defined 
 
 The lexer ([`lexer.cpp`](file:///c:/Work/CCompiler/lexer.cpp)) scans a broader subset of C that is **not yet supported** by the recursive descent parser:
 
-1. **Additional Keywords Lexed:** `auto`, `char`, `const`, `double`, `enum`, `extern`, `float`, `register`, `signed`, `sizeof`, `static`, `struct`, `typedef`, `union`, `unsigned`, `volatile`.
+1. **Additional Keywords Lexed:** `auto`, `char`, `const`, `double`, `enum`, `extern`, `float`, `register`, `signed`, `sizeof`, `static`, `typedef`, `unsigned`, `volatile`.
 2. **Literals Lexed:** String literals (`"..."`) and character literals (`'...'`) are scanned by the lexer, but rejected by `parse_primary`.
-3. **Operators Lexed:** Increment/decrement (`++`, `--`), bitwise operators (`|`, `^`, `<<`, `>>`), member access (`.`, `->`), and preprocessor hash (`#`) are tokenized by the lexer, but not accepted in expressions by the parser.
-4. **Structs & Type Definitions:** `struct` and `union` member definitions, `typedef`, and `enum` are not yet implemented. (Pointers, function pointers, address-of `&`, and dereference `*` are fully supported).
+3. **Operators Lexed:** Increment/decrement (`++`, `--`), bitwise operators (`|`, `^`, `<<`, `>>`), and preprocessor hash (`#`) are tokenized by the lexer, but not accepted in expressions by the parser.
+4. **Type Definitions & Enums:** `typedef` and `enum` are not yet implemented. (Structures, unions, member access `.` and `->`, pointers, and function pointers are fully supported).

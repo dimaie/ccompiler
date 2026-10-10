@@ -10,6 +10,7 @@ program
 
 statement
     = func_def
+    | struct_def
     | var_decl
     | if_stmt
     | for_stmt
@@ -24,6 +25,12 @@ statement
     | compound_stmt
     | expr_stmt
     | empty_stmt ;
+
+struct_def
+    = ( "struct" | "union" ) , [ IDENTIFIER ] , "{" , { member_decl } , "}" , [ { "*" } , IDENTIFIER , [ "[" , [ INT_LIT ] , "]" ] , [ "=" , ( expr | init_list ) ] ] , ";" ;
+
+member_decl
+    = type_specifier , { "*" } , IDENTIFIER , [ "[" , INT_LIT , "]" ] , ";" ;
 
 func_def
     = type_specifier , { "*" } , IDENTIFIER , "(" , [ "void" | param_list ] , ")" , compound_stmt ;
@@ -49,7 +56,8 @@ type_specifier
     = "void"
     | "int"
     | "short" , [ "int" ]
-    | "long" , [ "long" ] , [ "int" ] ;
+    | "long" , [ "long" ] , [ "int" ]
+    | ( "struct" | "union" ) , IDENTIFIER ;
 
 if_stmt
     = "if" , "(" , expr , ")" , statement , [ "else" , statement ] ;
@@ -100,12 +108,15 @@ expr
     = assignment ;
 
 assignment
-    = ( IDENTIFIER | array_access | deref_expr ) , "=" , assignment
+    = ( IDENTIFIER | array_access | member_access | deref_expr ) , "=" , assignment
     | logical_or ;
 
 deref_expr
     = "*" , unary
     | "(" , "*" , unary , ")" ;
+
+member_access
+    = primary , ( "." | "->" ) , IDENTIFIER ;
 
 array_access
     = IDENTIFIER , "[" , expr , "]" , { "[" , expr , "]" } ;
@@ -133,9 +144,12 @@ unary
     | primary ;
 
 primary
-    = IDENTIFIER , [ "(" , [ arg_list ] , ")" | { "[" , expr , "]" } ]
+    = primary_base , { ( "[" , expr , "]" ) | ( "." , IDENTIFIER ) | ( "->" , IDENTIFIER ) | ( "(" , [ arg_list ] , ")" ) } ;
+
+primary_base
+    = IDENTIFIER
     | INT_LIT
-    | "(" , expr , ")" , [ "(" , [ arg_list ] , ")" ] ;
+    | "(" , expr , ")" ;
 
 arg_list
     = expr , { "," , expr } ;

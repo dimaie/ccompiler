@@ -36,7 +36,8 @@ void CCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
   }
 
   for (const auto &stmt : program.statements) {
-    if (stmt && stmt->getType() == ASTNodeType::FuncDef) {
+    if (stmt && (stmt->getType() == ASTNodeType::FuncDef ||
+                 stmt->getType() == ASTNodeType::StructDef)) {
       stmt->accept(*this);
     }
   }
@@ -45,6 +46,10 @@ void CCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
     *out_ << "int main(void) {\n";
     indent_ = 1;
     for (const auto *stmt : non_func_stmts) {
+      if (stmt->getType() == ASTNodeType::StructDef &&
+          static_cast<const StructDefNode *>(stmt)->var_decl == nullptr) {
+        continue;
+      }
       print_indent();
       stmt->accept(*this);
       if (stmt->getType() != ASTNodeType::Compound &&
@@ -54,7 +59,8 @@ void CCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
           stmt->getType() != ASTNodeType::DoWhile &&
           stmt->getType() != ASTNodeType::Switch &&
           stmt->getType() != ASTNodeType::Label &&
-          stmt->getType() != ASTNodeType::FuncDef) {
+          stmt->getType() != ASTNodeType::FuncDef &&
+          stmt->getType() != ASTNodeType::StructDef) {
         *out_ << ";\n";
       } else {
         *out_ << "\n";
@@ -87,7 +93,12 @@ void CCodeGenerator::visit(const ProgramNode &node) {
 }
 
 void CCodeGenerator::visit(const FuncDefNode &node) {
-  *out_ << data_type_str(node.return_type);
+  if (node.return_type == DataType::Struct || node.return_type == DataType::Union) {
+    *out_ << (node.return_type == DataType::Union ? "union " : "struct ")
+          << node.return_struct_name;
+  } else {
+    *out_ << data_type_str(node.return_type);
+  }
   if (node.return_pointer_level > 0) {
     *out_ << " ";
     for (int i = 0; i < node.return_pointer_level; ++i) *out_ << "*";
@@ -118,7 +129,11 @@ void CCodeGenerator::visit(const FuncDefNode &node) {
         }
         *out_ << ")";
       } else {
-        *out_ << data_type_str(p.type);
+        if (p.type == DataType::Struct || p.type == DataType::Union) {
+          *out_ << (p.type == DataType::Union ? "union " : "struct ") << p.struct_name;
+        } else {
+          *out_ << data_type_str(p.type);
+        }
         if (p.pointer_level > 0) {
           *out_ << " ";
           for (int j = 0; j < p.pointer_level; ++j) *out_ << "*";
@@ -196,7 +211,11 @@ void CCodeGenerator::visit(const VarDeclNode &node) {
     }
     *out_ << ")";
   } else {
-    *out_ << data_type_str(node.data_type);
+    if (node.data_type == DataType::Struct || node.data_type == DataType::Union) {
+      *out_ << (node.data_type == DataType::Union ? "union " : "struct ") << node.struct_name;
+    } else {
+      *out_ << data_type_str(node.data_type);
+    }
     if (node.pointer_level > 0) {
       *out_ << " ";
       for (int i = 0; i < node.pointer_level; ++i) *out_ << "*";
@@ -392,6 +411,60 @@ void CCodeGenerator::visit(const LabelNode &node) {
 void CCodeGenerator::visit(const ReturnNode &node) {
   *out_ << "return ";
   if (node.expr) node.expr->accept(*this);
+}
+
+void CCodeGenerator::visit(const StructDefNode &node) {
+  *out_ << (node.is_union ? "union " : "struct ");
+  if (!node.name.empty()) {
+    *out_ << node.name << " ";
+  }
+  *out_ << "{\n";
+  indent_++;
+  for (const auto &m : node.members) {
+    print_indent();
+    if (m.type == DataType::Struct || m.type == DataType::Union) {
+      *out_ << (m.type == DataType::Union ? "union " : "struct ") << m.struct_name;
+    } else {
+      *out_ << data_type_str(m.type);
+    }
+    if (m.pointer_level > 0) {
+      *out_ << " ";
+      for (int i = 0; i < m.pointer_level; ++i) *out_ << "*";
+      *out_ << m.name;
+    } else {
+      *out_ << " " << m.name;
+    }
+    if (m.is_array) {
+      *out_ << "[" << m.array_size << "]";
+    }
+    *out_ << ";\n";
+  }
+  indent_--;
+  print_indent();
+  *out_ << "}";
+  if (node.var_decl) {
+    *out_ << " ";
+    if (node.var_decl->pointer_level > 0) {
+      for (int i = 0; i < node.var_decl->pointer_level; ++i) *out_ << "*";
+    }
+    *out_ << node.var_decl->name;
+    if (node.var_decl->is_array) {
+      *out_ << "[" << node.var_decl->array_size << "]";
+    }
+    if (node.var_decl->init) {
+      *out_ << " = ";
+      node.var_decl->init->accept(*this);
+    }
+  }
+  *out_ << ";\n";
+}
+
+void CCodeGenerator::visit(const MemberAccessNode &node) {
+  if (node.object) {
+    node.object->accept(*this);
+  }
+  *out_ << (node.is_arrow ? "->" : ".");
+  *out_ << node.member;
 }
 
 

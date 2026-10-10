@@ -3,7 +3,7 @@
 
 bool Parser::is_type_specifier(TokenType type) const {
   return type == TOK_KW_INT || type == TOK_KW_SHORT || type == TOK_KW_LONG ||
-         type == TOK_KW_VOID;
+         type == TOK_KW_VOID || type == TOK_KW_STRUCT || type == TOK_KW_UNION;
 }
 
 DataType Parser::parse_type_specifier() {
@@ -86,6 +86,9 @@ std::unique_ptr<VarDeclNode> Parser::parse_func_ptr_decl(DataType return_type) {
 }
 
 std::unique_ptr<ASTNode> Parser::parse_declaration() {
+  if (peek().type == TOK_KW_STRUCT || peek().type == TOK_KW_UNION) {
+    return parse_struct_or_union_decl();
+  }
   DataType type = parse_type_specifier();
   if (peek().type == TOK_LPAREN && peek(2).type == TOK_STAR) {
     return parse_func_ptr_decl(type);
@@ -104,6 +107,82 @@ std::unique_ptr<ASTNode> Parser::parse_declaration() {
   return parse_var_decl_after_id(type, id_tok, pointer_level);
 }
 
+std::unique_ptr<ASTNode> Parser::parse_struct_or_union_decl() {
+  Token kw_tok = peek();
+  bool is_union = match(TOK_KW_UNION);
+  if (!is_union) {
+    expect(TOK_KW_STRUCT, "Expected 'struct' or 'union'");
+  }
+
+  std::string tag;
+  if (peek().type == TOK_IDENTIFIER) {
+    tag = lexer_->next().text;
+  }
+
+  if (match(TOK_LBRACE)) {
+    std::vector<StructMember> members;
+    while (peek().type != TOK_RBRACE && peek().type != TOK_EOF) {
+      StructMember m;
+      if (peek().type == TOK_KW_STRUCT || peek().type == TOK_KW_UNION) {
+        m.is_union = match(TOK_KW_UNION);
+        if (!m.is_union) expect(TOK_KW_STRUCT, "Expected 'struct'");
+        m.type = m.is_union ? DataType::Union : DataType::Struct;
+        if (peek().type == TOK_IDENTIFIER) {
+          m.struct_name = lexer_->next().text;
+        }
+      } else {
+        m.type = parse_type_specifier();
+      }
+      while (match(TOK_STAR)) {
+        m.pointer_level++;
+      }
+      Token mem_id = expect(TOK_IDENTIFIER, "Expected member name");
+      m.name = mem_id.text;
+      if (match(TOK_LBRACKET)) {
+        m.is_array = true;
+        Token sz_tok = expect(TOK_INT_LIT, "Expected array size");
+        m.array_size = static_cast<int>(sz_tok.value.int_val);
+        expect(TOK_RBRACKET, "Expected ']' after array size");
+      }
+      expect(TOK_SEMICOLON, "Expected ';' after member declaration");
+      members.push_back(std::move(m));
+    }
+    expect(TOK_RBRACE, "Expected '}' after struct/union body");
+
+    if (match(TOK_SEMICOLON)) {
+      return std::make_unique<StructDefNode>(kw_tok.line, is_union, tag, std::move(members));
+    }
+
+    int ptr_level = 0;
+    while (match(TOK_STAR)) {
+      ptr_level++;
+    }
+    Token id_tok = expect(TOK_IDENTIFIER, "Expected variable name after struct/union definition");
+    auto var_decl = parse_var_decl_after_id(is_union ? DataType::Union : DataType::Struct, id_tok, ptr_level);
+    var_decl->struct_name = tag;
+    return std::make_unique<StructDefNode>(kw_tok.line, is_union, tag, std::move(members), std::move(var_decl));
+  }
+
+  if (tag.empty()) {
+    parse_error(peek(), "Expected struct or union tag name");
+  }
+
+  int ptr_level = 0;
+  while (match(TOK_STAR)) {
+    ptr_level++;
+  }
+  Token id_tok = expect(TOK_IDENTIFIER, "Expected variable or function name after struct/union type");
+  if (peek().type == TOK_LPAREN) {
+    auto func = parse_function_def(is_union ? DataType::Union : DataType::Struct, id_tok, ptr_level);
+    func->return_struct_name = tag;
+    return func;
+  }
+
+  auto var_decl = parse_var_decl_after_id(is_union ? DataType::Union : DataType::Struct, id_tok, ptr_level);
+  var_decl->struct_name = tag;
+  return var_decl;
+}
+
 std::unique_ptr<FuncDefNode>
 Parser::parse_function_def(DataType return_type, const Token &id_tok, int return_pointer_level) {
   expect(TOK_LPAREN, "Expected '(' after function name");
@@ -113,7 +192,17 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
       lexer_->next(); // consume 'void'
     } else {
       while (true) {
-        DataType param_type = parse_type_specifier();
+        DataType param_type = DataType::Int;
+        std::string param_struct_name;
+        if (peek().type == TOK_KW_STRUCT || peek().type == TOK_KW_UNION) {
+          bool is_u = match(TOK_KW_UNION);
+          if (!is_u) expect(TOK_KW_STRUCT, "Expected 'struct'");
+          param_type = is_u ? DataType::Union : DataType::Struct;
+          Token tag_tok = expect(TOK_IDENTIFIER, "Expected struct/union tag name");
+          param_struct_name = tag_tok.text;
+        } else {
+          param_type = parse_type_specifier();
+        }
         if (peek().type == TOK_LPAREN && peek(2).type == TOK_STAR) {
           expect(TOK_LPAREN, "Expected '(' in function pointer parameter");
           int ptr_level = 0;
@@ -148,6 +237,7 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
           p.is_func_ptr = true;
           p.func_ptr_ret_type = param_type;
           p.func_ptr_params = std::move(p_param_types);
+          p.struct_name = param_struct_name;
           params.push_back(std::move(p));
         } else {
           int param_ptr_level = 0;
@@ -164,6 +254,7 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
           p.pointer_level = param_ptr_level;
           p.name = param_name.text;
           p.line = param_name.line;
+          p.struct_name = param_struct_name;
           params.push_back(std::move(p));
         }
 
@@ -204,7 +295,10 @@ Parser::parse_var_decl_after_id(DataType type, const Token &id_tok, int pointer_
 
   std::unique_ptr<ASTNode> init = nullptr;
   if (match(TOK_ASSIGN)) {
-    if (is_array && peek().type == TOK_LBRACE) {
+    if (peek().type == TOK_LBRACE) {
+      if (!is_array && type != DataType::Struct && type != DataType::Union) {
+        parse_error(peek(), "Scalar variable cannot be initialized with initializer list");
+      }
       Token lbrace_tok = expect(TOK_LBRACE, "Expected '{'");
       std::vector<std::unique_ptr<ASTNode>> elements;
       if (peek().type != TOK_RBRACE) {
@@ -219,11 +313,13 @@ Parser::parse_var_decl_after_id(DataType type, const Token &id_tok, int pointer_
           break;
         }
       }
-      expect(TOK_RBRACE, "Expected '}' after array initializer list");
-      if (array_size == -1) {
-        array_size = static_cast<int>(elements.size());
-      } else if (static_cast<int>(elements.size()) > array_size) {
-        parse_error(lbrace_tok, "Too many initializers for array");
+      expect(TOK_RBRACE, "Expected '}' after initializer list");
+      if (is_array) {
+        if (array_size == -1) {
+          array_size = static_cast<int>(elements.size());
+        } else if (static_cast<int>(elements.size()) > array_size) {
+          parse_error(lbrace_tok, "Too many initializers for array");
+        }
       }
       init = std::make_unique<InitListNode>(lbrace_tok.line, std::move(elements));
     } else {
@@ -250,6 +346,19 @@ Parser::parse_var_decl_after_id(DataType type, const Token &id_tok, int pointer_
 }
 
 std::unique_ptr<VarDeclNode> Parser::parse_var_decl() {
+  if (peek().type == TOK_KW_STRUCT || peek().type == TOK_KW_UNION) {
+    auto node = parse_struct_or_union_decl();
+    if (node->getType() == ASTNodeType::VarDecl) {
+      return std::unique_ptr<VarDeclNode>(static_cast<VarDeclNode *>(node.release()));
+    }
+    if (node->getType() == ASTNodeType::StructDef) {
+      auto *sd = static_cast<StructDefNode *>(node.get());
+      if (sd->var_decl) {
+        return std::move(sd->var_decl);
+      }
+    }
+    parse_error(peek(), "Expected variable declaration");
+  }
   DataType type = parse_type_specifier();
   if (peek().type == TOK_LPAREN && peek(2).type == TOK_STAR) {
     return parse_func_ptr_decl(type);

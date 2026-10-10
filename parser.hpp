@@ -37,6 +37,7 @@ public:
   bool is_type_specifier(TokenType type) const;
   DataType parse_type_specifier();
   std::unique_ptr<ASTNode> parse_declaration();
+  std::unique_ptr<ASTNode> parse_struct_or_union_decl();
   std::unique_ptr<FuncDefNode> parse_function_def(DataType return_type, const Token &id_tok, int return_pointer_level = 0);
   std::unique_ptr<VarDeclNode> parse_var_decl_after_id(DataType type, const Token &id_tok, int pointer_level = 0);
   std::unique_ptr<VarDeclNode> parse_var_decl();

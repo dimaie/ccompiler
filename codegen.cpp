@@ -137,3 +137,11 @@ void ICodeGenerator::visit(const IdentifierNode &node) {
   unsupported(node, "identifier");
 }
 
+void ICodeGenerator::visit(const StructDefNode &node) {
+  unsupported(node, node.is_union ? "union definition" : "struct definition");
+}
+
+void ICodeGenerator::visit(const MemberAccessNode &node) {
+  unsupported(node, node.is_arrow ? "arrow member access" : "dot member access");
+}
+
