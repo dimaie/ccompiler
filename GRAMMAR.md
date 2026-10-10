@@ -239,5 +239,5 @@ The lexer ([`lexer.cpp`](file:///c:/Work/CCompiler/lexer.cpp)) scans a broader s
 
 1. **Additional Keywords Lexed:** `auto`, `char`, `const`, `double`, `enum`, `extern`, `float`, `register`, `signed`, `sizeof`, `static`, `struct`, `typedef`, `union`, `unsigned`, `volatile`.
 2. **Literals Lexed:** String literals (`"..."`) and character literals (`'...'`) are scanned by the lexer, but rejected by `parse_primary`.
-3. **Operators Lexed:** Increment/decrement (`++`, `--`), bitwise operators (`&`, `|`, `^`, `<<`, `>>`), member access (`.`, `->`), and preprocessor hash (`#`) are tokenized by the lexer, but not accepted in expressions by the parser.
-4. **Pointer Types & Structs:** Pointers (`*`), address-of (`&`), dereference (`*`), and `struct` member definitions are not yet implemented.
+3. **Operators Lexed:** Increment/decrement (`++`, `--`), bitwise operators (`|`, `^`, `<<`, `>>`), member access (`.`, `->`), and preprocessor hash (`#`) are tokenized by the lexer, but not accepted in expressions by the parser.
+4. **Structs & Type Definitions:** `struct` and `union` member definitions, `typedef`, and `enum` are not yet implemented. (Pointers, function pointers, address-of `&`, and dereference `*` are fully supported).
