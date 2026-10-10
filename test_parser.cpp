@@ -2,6 +2,7 @@
 #include "lexer.hpp"
 #include "parser.hpp"
 #include <cassert>
+#include <cstring>
 #include <iostream>
 #include <string>
 
@@ -705,6 +706,28 @@ static void test_syntax_errors() {
   }
 }
 
+static void test_token_names() {
+  std::cout << "Testing token_name()...\n";
+
+  assert(std::strcmp(token_name(TOK_EOF), "EOF") == 0);
+  assert(std::strcmp(token_name(TOK_IDENTIFIER), "IDENTIFIER") == 0);
+  assert(std::strcmp(token_name(TOK_COLON), ":") == 0);
+  assert(std::strcmp(token_name(TOK_SEMICOLON), ";") == 0);
+
+  // Keywords from KEYWORDS map
+  assert(std::strcmp(token_name(TOK_KW_IF), "if") == 0);
+  assert(std::strcmp(token_name(TOK_KW_ELSE), "else") == 0);
+  assert(std::strcmp(token_name(TOK_KW_WHILE), "while") == 0);
+  assert(std::strcmp(token_name(TOK_KW_FOR), "for") == 0);
+  assert(std::strcmp(token_name(TOK_KW_DO), "do") == 0);
+  assert(std::strcmp(token_name(TOK_KW_SWITCH), "switch") == 0);
+  assert(std::strcmp(token_name(TOK_KW_CASE), "case") == 0);
+  assert(std::strcmp(token_name(TOK_KW_BREAK), "break") == 0);
+  assert(std::strcmp(token_name(TOK_KW_CONTINUE), "continue") == 0);
+  assert(std::strcmp(token_name(TOK_KW_GOTO), "goto") == 0);
+  assert(std::strcmp(token_name(TOK_KW_RETURN), "return") == 0);
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running AST & Parser Test Suite\n";
@@ -729,9 +752,10 @@ int main() {
   test_identifier_node();
   test_compound_node();
   test_syntax_errors();
+  test_token_names();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (19/19)\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (20/20)\n";
   std::cout << "========================================\n";
   return 0;
 }

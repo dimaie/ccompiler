@@ -419,6 +419,15 @@ Token Lexer::peek2() {
 }
 
 const char *token_name(TokenType t) {
+  // Check keywords from KEYWORDS map
+  if (t >= TOK_KW_AUTO && t <= TOK_KW_WHILE) {
+    for (int i = 0; KEYWORDS[i].str != nullptr; ++i) {
+      if (KEYWORDS[i].type == t) {
+        return KEYWORDS[i].str;
+      }
+    }
+  }
+
   switch (t) {
   case TOK_EOF:
     return "EOF";
@@ -435,71 +444,6 @@ const char *token_name(TokenType t) {
   case TOK_STRING_LIT:
     return "STRING_LIT";
 
-  case TOK_KW_AUTO:
-    return "auto";
-  case TOK_KW_BREAK:
-    return "break";
-  case TOK_KW_CASE:
-    return "case";
-  case TOK_KW_CHAR:
-    return "char";
-  case TOK_KW_CONST:
-    return "const";
-  case TOK_KW_CONTINUE:
-    return "continue";
-  case TOK_KW_DEFAULT:
-    return "default";
-  case TOK_KW_DO:
-    return "do";
-  case TOK_KW_DOUBLE:
-    return "double";
-  case TOK_KW_ELSE:
-    return "else";
-  case TOK_KW_ENUM:
-    return "enum";
-  case TOK_KW_EXTERN:
-    return "extern";
-  case TOK_KW_FLOAT:
-    return "float";
-  case TOK_KW_FOR:
-    return "for";
-  case TOK_KW_GOTO:
-    return "goto";
-  case TOK_KW_IF:
-    return "if";
-  case TOK_KW_INT:
-    return "int";
-  case TOK_KW_LONG:
-    return "long";
-  case TOK_KW_REGISTER:
-    return "register";
-  case TOK_KW_RETURN:
-    return "return";
-  case TOK_KW_SHORT:
-    return "short";
-  case TOK_KW_SIGNED:
-    return "signed";
-  case TOK_KW_SIZEOF:
-    return "sizeof";
-  case TOK_KW_STATIC:
-    return "static";
-  case TOK_KW_STRUCT:
-    return "struct";
-  case TOK_KW_SWITCH:
-    return "switch";
-  case TOK_KW_TYPEDEF:
-    return "typedef";
-  case TOK_KW_UNION:
-    return "union";
-  case TOK_KW_UNSIGNED:
-    return "unsigned";
-  case TOK_KW_VOID:
-    return "void";
-  case TOK_KW_VOLATILE:
-    return "volatile";
-  case TOK_KW_WHILE:
-    return "while";
-
   case TOK_LPAREN:
     return "(";
   case TOK_RPAREN:
@@ -514,6 +458,8 @@ const char *token_name(TokenType t) {
     return "]";
   case TOK_SEMICOLON:
     return ";";
+  case TOK_COLON:
+    return ":";
   case TOK_COMMA:
     return ",";
   case TOK_DOT:
