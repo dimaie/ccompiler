@@ -192,7 +192,7 @@ std::unique_ptr<ASTNode> Parser::parse_statement() {
   if (t.type == TOK_KW_GOTO) {
     return parse_goto();
   }
-  if (t.type == TOK_IDENTIFIER && lexer_->peek2().type == TOK_COLON) {
+  if (t.type == TOK_IDENTIFIER && peek(2).type == TOK_COLON) {
     Token label_tok = expect(TOK_IDENTIFIER, "Expected label identifier");
     expect(TOK_COLON, "Expected ':' after label");
     return std::make_unique<LabelNode>(label_tok.line, label_tok.text);

@@ -25,6 +25,6 @@ bool Parser::match(TokenType type) {
   return false;
 }
 
-Token Parser::peek() {
-  return lexer_->peek();
+Token Parser::peek(size_t k) {
+  return lexer_->peek(k);
 }

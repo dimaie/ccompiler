@@ -398,24 +398,14 @@ Token Lexer::next() {
   return scan_token();
 }
 
-Token Lexer::peek() {
-  if (lookahead_count_ == 0) {
-    lookahead_[0] = scan_token();
-    lookahead_count_ = 1;
+Token Lexer::peek(size_t k) {
+  if (k < 1) {
+    k = 1;
   }
-  return lookahead_[0];
-}
-
-Token Lexer::peek2() {
-  if (lookahead_count_ == 0) {
-    lookahead_[0] = scan_token();
-    lookahead_[1] = scan_token();
-    lookahead_count_ = 2;
-  } else if (lookahead_count_ == 1) {
-    lookahead_[1] = scan_token();
-    lookahead_count_ = 2;
+  while (lookahead_count_ < static_cast<int>(k) && lookahead_count_ < 2) {
+    lookahead_[lookahead_count_++] = scan_token();
   }
-  return lookahead_[1];
+  return lookahead_[k - 1];
 }
 
 const char *token_name(TokenType t) {

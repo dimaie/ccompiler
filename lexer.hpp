@@ -105,8 +105,8 @@ public:
     void init(std::string_view source);
 
     Token next();
-    Token peek();
-    Token peek2();
+    Token peek(size_t k = 1);
+    Token peek2() { return peek(2); }
 
     const char *getSource() const { return src_; }
     size_t getCursor() const { return cursor_; }

@@ -43,7 +43,7 @@ public:
   [[noreturn]] void parse_error(const Token &tok, const std::string &msg);
   Token expect(TokenType type, const std::string &err_msg);
   bool match(TokenType type);
-  Token peek();
+  Token peek(size_t k = 1);
 
   // Utility combinators
   template <typename Fn>

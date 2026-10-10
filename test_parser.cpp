@@ -728,6 +728,36 @@ static void test_token_names() {
   assert(std::strcmp(token_name(TOK_KW_RETURN), "return") == 0);
 }
 
+static void test_lexer_peek() {
+  std::cout << "Testing Lexer::peek(k)...\n";
+
+  Lexer lexer;
+  lexer.init("label: return 42;");
+
+  // Default peek() is k=1
+  assert(lexer.peek().type == TOK_IDENTIFIER);
+  assert(std::strcmp(lexer.peek().text, "label") == 0);
+
+  // peek(1) matches peek()
+  assert(lexer.peek(1).type == TOK_IDENTIFIER);
+  assert(std::strcmp(lexer.peek(1).text, "label") == 0);
+
+  // peek(2) looks ahead to colon
+  assert(lexer.peek(2).type == TOK_COLON);
+  assert(std::strcmp(lexer.peek(2).text, ":") == 0);
+
+  // peek2() convenience method
+  assert(lexer.peek2().type == TOK_COLON);
+
+  // Advancing consumes token
+  Token t1 = lexer.next();
+  assert(t1.type == TOK_IDENTIFIER);
+
+  // Now peek() is colon, peek(2) is return keyword
+  assert(lexer.peek().type == TOK_COLON);
+  assert(lexer.peek(2).type == TOK_KW_RETURN);
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running AST & Parser Test Suite\n";
@@ -753,9 +783,10 @@ int main() {
   test_compound_node();
   test_syntax_errors();
   test_token_names();
+  test_lexer_peek();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (20/20)\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (21/21)\n";
   std::cout << "========================================\n";
   return 0;
 }
