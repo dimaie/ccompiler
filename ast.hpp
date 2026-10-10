@@ -14,6 +14,8 @@ enum class ASTNodeType {
   VarDecl,
   FuncDef,
   Call,
+  ArrayAccess,
+  InitList,
   If,
   For,
   While,
@@ -101,6 +103,8 @@ class CompoundNode;
 class VarDeclNode;
 class FuncDefNode;
 class CallNode;
+class ArrayAccessNode;
+class InitListNode;
 class IfNode;
 class ForNode;
 class WhileNode;
@@ -130,6 +134,8 @@ public:
   virtual void visit(const VarDeclNode &node) = 0;
   virtual void visit(const FuncDefNode &node) = 0;
   virtual void visit(const CallNode &node) = 0;
+  virtual void visit(const ArrayAccessNode &node) = 0;
+  virtual void visit(const InitListNode &node) = 0;
   virtual void visit(const IfNode &node) = 0;
   virtual void visit(const ForNode &node) = 0;
   virtual void visit(const WhileNode &node) = 0;
@@ -224,11 +230,18 @@ public:
   DataType data_type{DataType::Int};
   std::string name;
   std::unique_ptr<ASTNode> init;
+  bool is_array{false};
+  int array_size{0};
 
   VarDeclNode(int line, DataType data_type, std::string name,
               std::unique_ptr<ASTNode> init = nullptr)
       : ASTNode(line), data_type(data_type), name(std::move(name)),
-        init(std::move(init)) {}
+        init(std::move(init)), is_array(false), array_size(0) {}
+
+  VarDeclNode(int line, DataType data_type, std::string name, int array_size,
+              std::unique_ptr<ASTNode> init = nullptr)
+      : ASTNode(line), data_type(data_type), name(std::move(name)),
+        init(std::move(init)), is_array(true), array_size(array_size) {}
 
   VarDeclNode(int line, std::string name,
               std::unique_ptr<ASTNode> init = nullptr)
@@ -239,7 +252,12 @@ public:
 
   void print(int indent = 0) const override {
     print_indent(indent);
-    std::cout << "VarDecl (" << data_type_str(data_type) << " " << name << ")\n";
+    if (is_array) {
+      std::cout << "VarDecl (" << data_type_str(data_type) << " " << name
+                << "[" << array_size << "])\n";
+    } else {
+      std::cout << "VarDecl (" << data_type_str(data_type) << " " << name << ")\n";
+    }
     if (init) {
       init->print(indent + 1);
     }
@@ -689,6 +707,55 @@ public:
     for (const auto &arg : args) {
       if (arg) {
         arg->print(indent + 1);
+      }
+    }
+  }
+};
+
+class ArrayAccessNode : public ASTNode {
+public:
+  std::unique_ptr<ASTNode> array;
+  std::unique_ptr<ASTNode> index;
+
+  ArrayAccessNode(int line, std::unique_ptr<ASTNode> array,
+                  std::unique_ptr<ASTNode> index)
+      : ASTNode(line), array(std::move(array)), index(std::move(index)) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::ArrayAccess; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    std::cout << "ArrayAccess\n";
+    print_indent(indent + 1);
+    std::cout << "[Array]:\n";
+    if (array) {
+      array->print(indent + 2);
+    }
+    print_indent(indent + 1);
+    std::cout << "[Index]:\n";
+    if (index) {
+      index->print(indent + 2);
+    }
+  }
+};
+
+class InitListNode : public ASTNode {
+public:
+  std::vector<std::unique_ptr<ASTNode>> elements;
+
+  InitListNode(int line, std::vector<std::unique_ptr<ASTNode>> elements)
+      : ASTNode(line), elements(std::move(elements)) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::InitList; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    std::cout << "InitList {" << elements.size() << " elements}\n";
+    for (const auto &elem : elements) {
+      if (elem) {
+        elem->print(indent + 1);
       }
     }
   }

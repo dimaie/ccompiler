@@ -35,7 +35,10 @@ param
     = type_specifier , IDENTIFIER ;
 
 var_decl
-    = type_specifier , IDENTIFIER , [ "=" , expr ] , ";" ;
+    = type_specifier , IDENTIFIER , [ "[" , [ INT_LIT ] , "]" ] , [ "=" , ( expr | init_list ) ] , ";" ;
+
+init_list
+    = "{" , [ expr , { "," , expr } , [ "," ] ] , "}" ;
 
 type_specifier
     = "void"
@@ -92,8 +95,11 @@ expr
     = assignment ;
 
 assignment
-    = IDENTIFIER , "=" , assignment
+    = ( IDENTIFIER | array_access ) , "=" , assignment
     | logical_or ;
+
+array_access
+    = IDENTIFIER , "[" , expr , "]" , { "[" , expr , "]" } ;
 
 logical_or
     = logical_and , { "||" , logical_and } ;
@@ -118,7 +124,7 @@ unary
     | primary ;
 
 primary
-    = IDENTIFIER , [ "(" , [ arg_list ] , ")" ]
+    = IDENTIFIER , [ "(" , [ arg_list ] , ")" | { "[" , expr , "]" } ]
     | INT_LIT
     | "(" , expr , ")" ;
 

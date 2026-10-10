@@ -146,10 +146,37 @@ void CCodeGenerator::visit(const CompoundNode &node) {
 
 void CCodeGenerator::visit(const VarDeclNode &node) {
   *out_ << data_type_str(node.data_type) << " " << node.name;
+  if (node.is_array) {
+    *out_ << "[" << node.array_size << "]";
+  }
   if (node.init) {
     *out_ << " = ";
     node.init->accept(*this);
   }
+}
+
+void CCodeGenerator::visit(const ArrayAccessNode &node) {
+  if (node.array) {
+    node.array->accept(*this);
+  }
+  *out_ << "[";
+  if (node.index) {
+    node.index->accept(*this);
+  }
+  *out_ << "]";
+}
+
+void CCodeGenerator::visit(const InitListNode &node) {
+  *out_ << "{";
+  for (size_t i = 0; i < node.elements.size(); ++i) {
+    if (i > 0) {
+      *out_ << ", ";
+    }
+    if (node.elements[i]) {
+      node.elements[i]->accept(*this);
+    }
+  }
+  *out_ << "}";
 }
 
 void CCodeGenerator::visit(const AssignNode &node) {

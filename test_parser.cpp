@@ -923,6 +923,146 @@ static void test_call_node() {
   }
 }
 
+static void test_array_node() {
+  std::cout << "Testing Array Declarations & Subscripting...\n";
+
+  // Declaration without initializer
+  {
+    auto prog = parse_source("int arr[5];\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::VarDecl);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->name == "arr");
+    assert(var->is_array == true);
+    assert(var->array_size == 5);
+    assert(var->init == nullptr);
+  }
+
+  // Declaration with initializer list
+  {
+    auto prog = parse_source("int a[3] = {1, 2, 3};\n");
+    assert(prog->statements.size() == 1);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->name == "a");
+    assert(var->is_array == true);
+    assert(var->array_size == 3);
+    assert(var->init != nullptr);
+    assert(var->init->getType() == ASTNodeType::InitList);
+    auto *init_list = static_cast<InitListNode *>(var->init.get());
+    assert(init_list->elements.size() == 3);
+  }
+
+  // Declaration with inferred size
+  {
+    auto prog = parse_source("int a[] = {10, 20, 30, 40};\n");
+    assert(prog->statements.size() == 1);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->name == "a");
+    assert(var->is_array == true);
+    assert(var->array_size == 4);
+    assert(var->init != nullptr);
+    assert(var->init->getType() == ASTNodeType::InitList);
+  }
+
+  // Initializer list with trailing comma
+  {
+    auto prog = parse_source("short s[2] = {100, 200,};\n");
+    assert(prog->statements.size() == 1);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->data_type == DataType::Short);
+    assert(var->is_array == true);
+    assert(var->array_size == 2);
+    auto *init_list = static_cast<InitListNode *>(var->init.get());
+    assert(init_list->elements.size() == 2);
+  }
+
+  // Array access in expression
+  {
+    auto prog = parse_source("int x = a[0] + a[i + 1];\n");
+    assert(prog->statements.size() == 1);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->init != nullptr);
+    assert(var->init->getType() == ASTNodeType::BinaryOp);
+    auto *bin = static_cast<BinaryOpNode *>(var->init.get());
+    assert(bin->left->getType() == ASTNodeType::ArrayAccess);
+    assert(bin->right->getType() == ASTNodeType::ArrayAccess);
+    auto *acc = static_cast<ArrayAccessNode *>(bin->left.get());
+    assert(acc->array->getType() == ASTNodeType::Identifier);
+    auto *arr_id = static_cast<IdentifierNode *>(acc->array.get());
+    assert(arr_id->name == "a");
+    assert(acc->index->getType() == ASTNodeType::IntLit);
+  }
+
+  // Assignment to array element
+  {
+    auto prog = parse_source("a[2] = 42;\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::Assign);
+    auto *assign = static_cast<AssignNode *>(prog->statements[0].get());
+    assert(assign->left->getType() == ASTNodeType::ArrayAccess);
+    auto *acc = static_cast<ArrayAccessNode *>(assign->left.get());
+    auto *arr_id = static_cast<IdentifierNode *>(acc->array.get());
+    assert(arr_id->name == "a");
+    assert(acc->index->getType() == ASTNodeType::IntLit);
+    assert(assign->right->getType() == ASTNodeType::IntLit);
+  }
+
+  // Error handling: size 0
+  {
+    bool threw = false;
+    try {
+      parse_source("int a[0];\n");
+    } catch (const std::runtime_error &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+
+  // Error handling: missing size without initializer
+  {
+    bool threw = false;
+    try {
+      parse_source("int a[];\n");
+    } catch (const std::runtime_error &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+
+  // Error handling: excess initializers
+  {
+    bool threw = false;
+    try {
+      parse_source("int a[2] = {1, 2, 3};\n");
+    } catch (const std::runtime_error &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+
+  // Error handling: array initialized with non-list
+  {
+    bool threw = false;
+    try {
+      parse_source("int a[2] = 5;\n");
+    } catch (const std::runtime_error &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+
+  // Error handling: scalar initialized with list
+  {
+    bool threw = false;
+    try {
+      parse_source("int a = {1, 2};\n");
+    } catch (const std::runtime_error &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running AST & Parser Test Suite\n";
@@ -951,9 +1091,10 @@ int main() {
   test_lexer_peek();
   test_func_def_node();
   test_call_node();
+  test_array_node();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (23/23)\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (24/24)\n";
   std::cout << "========================================\n";
   return 0;
 }

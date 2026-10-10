@@ -31,11 +31,54 @@ DataType X86_64CodeGenerator::get_var_type(const std::string &name) const {
   return DataType::Int;
 }
 
+static int compute_ast_frame_bytes(const ASTNode *node) {
+  if (!node) return 0;
+  int size = 0;
+  if (node->getType() == ASTNodeType::VarDecl) {
+    const auto *v = static_cast<const VarDeclNode *>(node);
+    if (v->is_array) {
+      size += v->array_size * 8;
+    } else {
+      size += 8;
+    }
+  } else if (node->getType() == ASTNodeType::Compound) {
+    const auto *c = static_cast<const CompoundNode *>(node);
+    for (const auto &s : c->statements) {
+      size += compute_ast_frame_bytes(s.get());
+    }
+  } else if (node->getType() == ASTNodeType::If) {
+    const auto *i = static_cast<const IfNode *>(node);
+    size += compute_ast_frame_bytes(i->then_branch.get());
+    size += compute_ast_frame_bytes(i->else_branch.get());
+  } else if (node->getType() == ASTNodeType::For) {
+    const auto *f = static_cast<const ForNode *>(node);
+    size += compute_ast_frame_bytes(f->init.get());
+    size += compute_ast_frame_bytes(f->body.get());
+  } else if (node->getType() == ASTNodeType::While) {
+    const auto *w = static_cast<const WhileNode *>(node);
+    size += compute_ast_frame_bytes(w->body.get());
+  } else if (node->getType() == ASTNodeType::DoWhile) {
+    const auto *d = static_cast<const DoWhileNode *>(node);
+    size += compute_ast_frame_bytes(d->body.get());
+  } else if (node->getType() == ASTNodeType::Switch) {
+    const auto *s = static_cast<const SwitchNode *>(node);
+    size += 8;
+    for (const auto &c : s->cases) {
+      for (const auto &st : c->statements) {
+        size += compute_ast_frame_bytes(st.get());
+      }
+    }
+  }
+  return size;
+}
+
 void X86_64CodeGenerator::generate(const ProgramNode &program,
                                    std::ostream &out) {
   out_ = &out;
   var_offsets_.clear();
   var_types_.clear();
+  is_array_.clear();
+  array_sizes_.clear();
   current_offset_ = 0;
   label_counter_ = 0;
   break_stack_.clear();
@@ -59,12 +102,18 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
   }
 
   if (!has_func_defs) {
+    int extra = 0;
+    for (const auto &stmt : program.statements) {
+      extra += compute_ast_frame_bytes(stmt.get());
+    }
+    int frame_size = (extra + 16 > 128) ? ((extra + 16 + 15) & ~15) : 128;
+
     ret_label_ = ".Lmain_ret";
     emit_raw(".globl main");
     emit_raw("main:");
     emit_line("pushq %rbp");
     emit_line("movq %rsp, %rbp");
-    emit_line("subq $128, %rsp");
+    emit_line("subq $" + std::to_string(frame_size) + ", %rsp");
 
     program.accept(*this);
 
@@ -83,13 +132,22 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
   if (!has_main_func && !non_func_stmts.empty()) {
     var_offsets_.clear();
     var_types_.clear();
+    is_array_.clear();
+    array_sizes_.clear();
     current_offset_ = 0;
+
+    int extra = 0;
+    for (const auto *stmt : non_func_stmts) {
+      extra += compute_ast_frame_bytes(stmt);
+    }
+    int frame_size = (extra + 16 > 128) ? ((extra + 16 + 15) & ~15) : 128;
+
     ret_label_ = ".Lmain_ret";
     emit_raw(".globl main");
     emit_raw("main:");
     emit_line("pushq %rbp");
     emit_line("movq %rsp, %rbp");
-    emit_line("subq $128, %rsp");
+    emit_line("subq $" + std::to_string(frame_size) + ", %rsp");
 
     for (const auto *stmt : non_func_stmts) {
       stmt->accept(*this);
@@ -104,6 +162,8 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
 void X86_64CodeGenerator::visit(const FuncDefNode &node) {
   var_offsets_.clear();
   var_types_.clear();
+  is_array_.clear();
+  array_sizes_.clear();
   current_offset_ = 0;
   break_stack_.clear();
   continue_stack_.clear();
@@ -111,11 +171,15 @@ void X86_64CodeGenerator::visit(const FuncDefNode &node) {
   std::string prev_ret_label = ret_label_;
   ret_label_ = ".L" + node.name + "_ret";
 
+  int extra = static_cast<int>(node.params.size()) * 8 +
+              compute_ast_frame_bytes(node.body.get());
+  int frame_size = (extra + 16 > 128) ? ((extra + 16 + 15) & ~15) : 128;
+
   emit_raw(".globl " + node.name);
   emit_raw(node.name + ":");
   emit_line("pushq %rbp");
   emit_line("movq %rsp, %rbp");
-  emit_line("subq $128, %rsp");
+  emit_line("subq $" + std::to_string(frame_size) + ", %rsp");
 
   static const char *const ARG_REGS[] = {
       "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
@@ -190,20 +254,109 @@ void X86_64CodeGenerator::visit(const CompoundNode &node) {
 
 void X86_64CodeGenerator::visit(const VarDeclNode &node) {
   var_types_[node.name] = node.data_type;
-  int offset = get_var_offset(node.name);
-  if (node.init) {
-    node.init->accept(*this);
-    if (node.data_type == DataType::Short) {
-      emit_line("movw %ax, -" + std::to_string(offset) + "(%rbp)");
-    } else {
-      emit_line("movq %rax, -" + std::to_string(offset) + "(%rbp)");
+  if (node.is_array) {
+    is_array_[node.name] = true;
+    array_sizes_[node.name] = node.array_size;
+    int elem_size = (node.data_type == DataType::Short) ? 2 : 8;
+    current_offset_ += node.array_size * elem_size;
+    if (current_offset_ % 8 != 0) {
+      current_offset_ += 8 - (current_offset_ % 8);
+    }
+    int base_offset = current_offset_;
+    var_offsets_[node.name] = base_offset;
+
+    if (node.init) {
+      const auto *init_list = static_cast<const InitListNode *>(node.init.get());
+      for (size_t i = 0; i < init_list->elements.size(); ++i) {
+        if (init_list->elements[i]) {
+          init_list->elements[i]->accept(*this);
+          int elem_offset = base_offset - static_cast<int>(i) * elem_size;
+          if (node.data_type == DataType::Short) {
+            emit_line("movw %ax, -" + std::to_string(elem_offset) + "(%rbp)");
+          } else {
+            emit_line("movq %rax, -" + std::to_string(elem_offset) + "(%rbp)");
+          }
+        }
+      }
+    }
+  } else {
+    int offset = get_var_offset(node.name);
+    if (node.init) {
+      node.init->accept(*this);
+      if (node.data_type == DataType::Short) {
+        emit_line("movw %ax, -" + std::to_string(offset) + "(%rbp)");
+      } else {
+        emit_line("movq %rax, -" + std::to_string(offset) + "(%rbp)");
+      }
+    }
+  }
+}
+
+void X86_64CodeGenerator::visit(const ArrayAccessNode &node) {
+  if (!node.array || node.array->getType() != ASTNodeType::Identifier) {
+    unsupported(node, "complex array access");
+  }
+  auto *ident = static_cast<const IdentifierNode *>(node.array.get());
+  int base_offset = get_var_offset(ident->name);
+
+  if (node.index) {
+    node.index->accept(*this);
+  } else {
+    emit_line("movq $0, %rax");
+  }
+
+  emit_line("leaq -" + std::to_string(base_offset) + "(%rbp), %r11");
+  if (get_var_type(ident->name) == DataType::Short) {
+    emit_line("movswq (%r11, %rax, 2), %rax");
+  } else {
+    emit_line("movq (%r11, %rax, 8), %rax");
+  }
+}
+
+void X86_64CodeGenerator::visit(const InitListNode &node) {
+  for (const auto &elem : node.elements) {
+    if (elem) {
+      elem->accept(*this);
     }
   }
 }
 
 void X86_64CodeGenerator::visit(const AssignNode &node) {
-  if (!node.left || node.left->getType() != ASTNodeType::Identifier) {
-    throw std::runtime_error("Left-hand side of assignment must be variable");
+  if (!node.left) {
+    throw std::runtime_error("Left-hand side of assignment cannot be null");
+  }
+
+  if (node.left->getType() == ASTNodeType::ArrayAccess) {
+    auto *acc = static_cast<const ArrayAccessNode *>(node.left.get());
+    if (!acc->array || acc->array->getType() != ASTNodeType::Identifier) {
+      unsupported(node, "complex array assignment");
+    }
+    auto *ident = static_cast<const IdentifierNode *>(acc->array.get());
+    int base_offset = get_var_offset(ident->name);
+
+    if (acc->index) {
+      acc->index->accept(*this);
+    } else {
+      emit_line("movq $0, %rax");
+    }
+    emit_line("pushq %rax");
+
+    if (node.right) {
+      node.right->accept(*this);
+    }
+
+    emit_line("popq %r10");
+    emit_line("leaq -" + std::to_string(base_offset) + "(%rbp), %r11");
+    if (get_var_type(ident->name) == DataType::Short) {
+      emit_line("movw %ax, (%r11, %r10, 2)");
+    } else {
+      emit_line("movq %rax, (%r11, %r10, 8)");
+    }
+    return;
+  }
+
+  if (node.left->getType() != ASTNodeType::Identifier) {
+    throw std::runtime_error("Left-hand side of assignment must be variable or array element");
   }
   auto *ident = static_cast<const IdentifierNode *>(node.left.get());
   int offset = get_var_offset(ident->name);
@@ -224,6 +377,11 @@ void X86_64CodeGenerator::visit(const IntLitNode &node) {
 
 void X86_64CodeGenerator::visit(const IdentifierNode &node) {
   int offset = get_var_offset(node.name);
+  auto it = is_array_.find(node.name);
+  if (it != is_array_.end() && it->second) {
+    emit_line("leaq -" + std::to_string(offset) + "(%rbp), %rax");
+    return;
+  }
   if (get_var_type(node.name) == DataType::Short) {
     emit_line("movswq -" + std::to_string(offset) + "(%rbp), %rax");
   } else {

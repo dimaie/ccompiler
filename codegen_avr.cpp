@@ -24,9 +24,52 @@ int AVRCodeGenerator::get_var_offset(const std::string &name) {
   return current_offset_;
 }
 
+static int compute_ast_frame_bytes(const ASTNode *node) {
+  if (!node) return 0;
+  int size = 0;
+  if (node->getType() == ASTNodeType::VarDecl) {
+    const auto *v = static_cast<const VarDeclNode *>(node);
+    if (v->is_array) {
+      size += v->array_size * 2;
+    } else {
+      size += 2;
+    }
+  } else if (node->getType() == ASTNodeType::Compound) {
+    const auto *c = static_cast<const CompoundNode *>(node);
+    for (const auto &s : c->statements) {
+      size += compute_ast_frame_bytes(s.get());
+    }
+  } else if (node->getType() == ASTNodeType::If) {
+    const auto *i = static_cast<const IfNode *>(node);
+    size += compute_ast_frame_bytes(i->then_branch.get());
+    size += compute_ast_frame_bytes(i->else_branch.get());
+  } else if (node->getType() == ASTNodeType::For) {
+    const auto *f = static_cast<const ForNode *>(node);
+    size += compute_ast_frame_bytes(f->init.get());
+    size += compute_ast_frame_bytes(f->body.get());
+  } else if (node->getType() == ASTNodeType::While) {
+    const auto *w = static_cast<const WhileNode *>(node);
+    size += compute_ast_frame_bytes(w->body.get());
+  } else if (node->getType() == ASTNodeType::DoWhile) {
+    const auto *d = static_cast<const DoWhileNode *>(node);
+    size += compute_ast_frame_bytes(d->body.get());
+  } else if (node->getType() == ASTNodeType::Switch) {
+    const auto *s = static_cast<const SwitchNode *>(node);
+    size += 2;
+    for (const auto &c : s->cases) {
+      for (const auto &st : c->statements) {
+        size += compute_ast_frame_bytes(st.get());
+      }
+    }
+  }
+  return size;
+}
+
 void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
   out_ = &out;
   var_offsets_.clear();
+  is_array_.clear();
+  array_sizes_.clear();
   current_offset_ = 0;
   label_counter_ = 0;
   break_stack_.clear();
@@ -56,16 +99,22 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
   emit_raw(".arch atmega328p");
 
   if (!has_func_defs) {
+    int extra = 0;
+    for (const auto &stmt : program.statements) {
+      extra += compute_ast_frame_bytes(stmt.get());
+    }
+    int frame_size = (extra + 2 > 32) ? (extra + 2) : 32;
+
     ret_label_ = ".Lmain_avr_ret";
     emit_raw(".global main");
     emit_raw("main:");
 
-    // Prologue: Save Y frame pointer and set up stack frame (32 bytes)
+    // Prologue: Save Y frame pointer and set up stack frame
     emit_line("push r28");
     emit_line("push r29");
     emit_line("in r28, 0x3d        ; SPL");
     emit_line("in r29, 0x3e        ; SPH");
-    emit_line("sbiw r28, 32        ; allocate 32-byte local stack frame");
+    emit_line("sbiw r28, " + std::to_string(frame_size) + "        ; allocate local stack frame");
     emit_line("in r0, 0x3f         ; SREG");
     emit_line("cli");
     emit_line("out 0x3e, r29       ; update SPH");
@@ -76,7 +125,7 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
 
     // Epilogue: Restore stack and frame pointer, then return
     emit_raw(ret_label_ + ":");
-    emit_line("adiw r28, 32        ; free stack frame");
+    emit_line("adiw r28, " + std::to_string(frame_size) + "        ; free stack frame");
     emit_line("in r0, 0x3f");
     emit_line("cli");
     emit_line("out 0x3e, r29");
@@ -96,7 +145,16 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
 
   if (!has_main_func && !non_func_stmts.empty()) {
     var_offsets_.clear();
+    is_array_.clear();
+    array_sizes_.clear();
     current_offset_ = 0;
+
+    int extra = 0;
+    for (const auto *stmt : non_func_stmts) {
+      extra += compute_ast_frame_bytes(stmt);
+    }
+    int frame_size = (extra + 2 > 32) ? (extra + 2) : 32;
+
     ret_label_ = ".Lmain_avr_ret";
     emit_raw(".global main");
     emit_raw("main:");
@@ -105,7 +163,7 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
     emit_line("push r29");
     emit_line("in r28, 0x3d        ; SPL");
     emit_line("in r29, 0x3e        ; SPH");
-    emit_line("sbiw r28, 32        ; allocate 32-byte local stack frame");
+    emit_line("sbiw r28, " + std::to_string(frame_size) + "        ; allocate local stack frame");
     emit_line("in r0, 0x3f         ; SREG");
     emit_line("cli");
     emit_line("out 0x3e, r29       ; update SPH");
@@ -117,7 +175,7 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
     }
 
     emit_raw(ret_label_ + ":");
-    emit_line("adiw r28, 32        ; free stack frame");
+    emit_line("adiw r28, " + std::to_string(frame_size) + "        ; free stack frame");
     emit_line("in r0, 0x3f");
     emit_line("cli");
     emit_line("out 0x3e, r29");
@@ -131,6 +189,8 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
 
 void AVRCodeGenerator::visit(const FuncDefNode &node) {
   var_offsets_.clear();
+  is_array_.clear();
+  array_sizes_.clear();
   current_offset_ = 0;
   break_stack_.clear();
   continue_stack_.clear();
@@ -138,15 +198,19 @@ void AVRCodeGenerator::visit(const FuncDefNode &node) {
   std::string prev_ret_label = ret_label_;
   ret_label_ = ".L" + node.name + "_avr_ret";
 
+  int extra = static_cast<int>(node.params.size()) * 2 +
+              compute_ast_frame_bytes(node.body.get());
+  int frame_size = (extra + 2 > 32) ? (extra + 2) : 32;
+
   emit_raw(".global " + node.name);
   emit_raw(node.name + ":");
 
-  // Prologue: Save Y frame pointer and set up stack frame (32 bytes)
+  // Prologue: Save Y frame pointer and set up stack frame
   emit_line("push r28");
   emit_line("push r29");
   emit_line("in r28, 0x3d        ; SPL");
   emit_line("in r29, 0x3e        ; SPH");
-  emit_line("sbiw r28, 32        ; allocate 32-byte local stack frame");
+  emit_line("sbiw r28, " + std::to_string(frame_size) + "        ; allocate local stack frame");
   emit_line("in r0, 0x3f         ; SREG");
   emit_line("cli");
   emit_line("out 0x3e, r29       ; update SPH");
@@ -163,8 +227,8 @@ void AVRCodeGenerator::visit(const FuncDefNode &node) {
         unsupported(node, "type modifier 'long' on AVR parameter");
       }
       int offset = get_var_offset(p.name);
-      emit_line("std Y+" + std::to_string(offset) + ", " + ARG_REGS[i].first);
-      emit_line("std Y+" + std::to_string(offset + 1) + ", " +
+      emit_line("std Y+" + std::to_string(offset - 1) + ", " + ARG_REGS[i].first);
+      emit_line("std Y+" + std::to_string(offset) + ", " +
                 ARG_REGS[i].second);
     } else {
       unsupported(node, "more than 4 function parameters on AVR");
@@ -177,7 +241,7 @@ void AVRCodeGenerator::visit(const FuncDefNode &node) {
 
   // Epilogue: Restore stack and frame pointer, then return
   emit_raw(ret_label_ + ":");
-  emit_line("adiw r28, 32        ; free stack frame");
+  emit_line("adiw r28, " + std::to_string(frame_size) + "        ; free stack frame");
   emit_line("in r0, 0x3f");
   emit_line("cli");
   emit_line("out 0x3e, r29");
@@ -237,17 +301,110 @@ void AVRCodeGenerator::visit(const VarDeclNode &node) {
   if (node.data_type == DataType::Long || node.data_type == DataType::LongLong) {
     unsupported(node, "type modifier 'long'");
   }
-  int offset = get_var_offset(node.name);
-  if (node.init) {
-    node.init->accept(*this);
-    emit_line("std Y+" + std::to_string(offset - 1) + ", r24");
-    emit_line("std Y+" + std::to_string(offset) + ", r25");
+  if (node.is_array) {
+    is_array_[node.name] = true;
+    array_sizes_[node.name] = node.array_size;
+    int elem_size = 2;
+    int base_offset = current_offset_ + 1;
+    current_offset_ += node.array_size * elem_size;
+    var_offsets_[node.name] = base_offset;
+
+    if (node.init) {
+      const auto *init_list = static_cast<const InitListNode *>(node.init.get());
+      for (size_t i = 0; i < init_list->elements.size(); ++i) {
+        if (init_list->elements[i]) {
+          init_list->elements[i]->accept(*this);
+          int elem_offset = base_offset + static_cast<int>(i) * elem_size;
+          emit_line("std Y+" + std::to_string(elem_offset) + ", r24");
+          emit_line("std Y+" + std::to_string(elem_offset + 1) + ", r25");
+        }
+      }
+    }
+  } else {
+    int offset = get_var_offset(node.name);
+    if (node.init) {
+      node.init->accept(*this);
+      emit_line("std Y+" + std::to_string(offset - 1) + ", r24");
+      emit_line("std Y+" + std::to_string(offset) + ", r25");
+    }
+  }
+}
+
+void AVRCodeGenerator::visit(const ArrayAccessNode &node) {
+  if (!node.array || node.array->getType() != ASTNodeType::Identifier) {
+    unsupported(node, "complex array access");
+  }
+  auto *ident = static_cast<const IdentifierNode *>(node.array.get());
+  int base_offset = get_var_offset(ident->name);
+
+  if (node.index) {
+    node.index->accept(*this);
+  } else {
+    emit_line("ldi r24, 0");
+    emit_line("ldi r25, 0");
+  }
+
+  emit_line("lsl r24");
+  emit_line("rol r25");
+  emit_line("subi r24, lo8(-" + std::to_string(base_offset) + ")");
+  emit_line("sbci r25, hi8(-" + std::to_string(base_offset) + ")");
+  emit_line("movw r30, r28");
+  emit_line("add r30, r24");
+  emit_line("adc r31, r25");
+  emit_line("ld r24, Z");
+  emit_line("ldd r25, Z+1");
+}
+
+void AVRCodeGenerator::visit(const InitListNode &node) {
+  for (const auto &elem : node.elements) {
+    if (elem) {
+      elem->accept(*this);
+    }
   }
 }
 
 void AVRCodeGenerator::visit(const AssignNode &node) {
-  if (!node.left || node.left->getType() != ASTNodeType::Identifier) {
-    throw std::runtime_error("Left-hand side of assignment must be variable");
+  if (!node.left) {
+    throw std::runtime_error("Left-hand side of assignment cannot be null");
+  }
+
+  if (node.left->getType() == ASTNodeType::ArrayAccess) {
+    auto *acc = static_cast<const ArrayAccessNode *>(node.left.get());
+    if (!acc->array || acc->array->getType() != ASTNodeType::Identifier) {
+      unsupported(node, "complex array assignment");
+    }
+    auto *ident = static_cast<const IdentifierNode *>(acc->array.get());
+    int base_offset = get_var_offset(ident->name);
+
+    if (acc->index) {
+      acc->index->accept(*this);
+    } else {
+      emit_line("ldi r24, 0");
+      emit_line("ldi r25, 0");
+    }
+    emit_line("push r24");
+    emit_line("push r25");
+
+    if (node.right) {
+      node.right->accept(*this);
+    }
+
+    emit_line("pop r19");
+    emit_line("pop r18");
+    emit_line("lsl r18");
+    emit_line("rol r19");
+    emit_line("subi r18, lo8(-" + std::to_string(base_offset) + ")");
+    emit_line("sbci r19, hi8(-" + std::to_string(base_offset) + ")");
+    emit_line("movw r30, r28");
+    emit_line("add r30, r18");
+    emit_line("adc r31, r19");
+    emit_line("st Z, r24");
+    emit_line("std Z+1, r25");
+    return;
+  }
+
+  if (node.left->getType() != ASTNodeType::Identifier) {
+    throw std::runtime_error("Left-hand side of assignment must be variable or array element");
   }
   auto *ident = static_cast<const IdentifierNode *>(node.left.get());
   int offset = get_var_offset(ident->name);
@@ -269,6 +426,13 @@ void AVRCodeGenerator::visit(const IntLitNode &node) {
 
 void AVRCodeGenerator::visit(const IdentifierNode &node) {
   int offset = get_var_offset(node.name);
+  auto it = is_array_.find(node.name);
+  if (it != is_array_.end() && it->second) {
+    emit_line("movw r24, r28");
+    emit_line("subi r24, lo8(-" + std::to_string(offset) + ")");
+    emit_line("sbci r25, hi8(-" + std::to_string(offset) + ")");
+    return;
+  }
   emit_line("ldd r24, Y+" + std::to_string(offset - 1));
   emit_line("ldd r25, Y+" + std::to_string(offset));
 }

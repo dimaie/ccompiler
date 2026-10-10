@@ -20,6 +20,8 @@ public:
   void visit(const VarDeclNode &node) override;
   void visit(const FuncDefNode &node) override;
   void visit(const CallNode &node) override;
+  void visit(const ArrayAccessNode &node) override;
+  void visit(const InitListNode &node) override;
   void visit(const IfNode &node) override;
   void visit(const ForNode &node) override;
   void visit(const WhileNode &node) override;
@@ -41,6 +43,8 @@ private:
   std::ostream *out_{nullptr};
   std::unordered_map<std::string, int> var_offsets_;
   std::unordered_map<std::string, DataType> var_types_;
+  std::unordered_map<std::string, bool> is_array_;
+  std::unordered_map<std::string, int> array_sizes_;
   int current_offset_{0};
   int label_counter_{0};
   std::string ret_label_{".Lmain_ret"};

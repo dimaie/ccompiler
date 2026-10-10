@@ -81,11 +81,66 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok) {
 
 std::unique_ptr<VarDeclNode>
 Parser::parse_var_decl_after_id(DataType type, const Token &id_tok) {
+  bool is_array = false;
+  int array_size = 0;
+
+  if (match(TOK_LBRACKET)) {
+    is_array = true;
+    if (peek().type == TOK_INT_LIT) {
+      Token sz_tok = expect(TOK_INT_LIT, "Expected integer literal for array size");
+      array_size = static_cast<int>(sz_tok.value.int_val);
+      if (array_size <= 0) {
+        parse_error(sz_tok, "Array size must be positive");
+      }
+    } else if (peek().type == TOK_RBRACKET) {
+      array_size = -1; // to be inferred from initializer list
+    } else {
+      parse_error(peek(), "Expected integer literal or ']' in array declaration");
+    }
+    expect(TOK_RBRACKET, "Expected ']' after array size");
+  }
+
   std::unique_ptr<ASTNode> init = nullptr;
   if (match(TOK_ASSIGN)) {
-    init = parse_expr();
+    if (is_array && peek().type == TOK_LBRACE) {
+      Token lbrace_tok = expect(TOK_LBRACE, "Expected '{'");
+      std::vector<std::unique_ptr<ASTNode>> elements;
+      if (peek().type != TOK_RBRACE) {
+        while (true) {
+          elements.push_back(parse_expr());
+          if (match(TOK_COMMA)) {
+            if (peek().type == TOK_RBRACE) {
+              break;
+            }
+            continue;
+          }
+          break;
+        }
+      }
+      expect(TOK_RBRACE, "Expected '}' after array initializer list");
+      if (array_size == -1) {
+        array_size = static_cast<int>(elements.size());
+      } else if (static_cast<int>(elements.size()) > array_size) {
+        parse_error(lbrace_tok, "Too many initializers for array");
+      }
+      init = std::make_unique<InitListNode>(lbrace_tok.line, std::move(elements));
+    } else {
+      if (is_array) {
+        parse_error(peek(), "Array initializer must be an initializer list '{...}'");
+      }
+      init = parse_expr();
+    }
   }
+
+  if (is_array && array_size <= 0) {
+    parse_error(id_tok, "Array size must be positive");
+  }
+
   expect(TOK_SEMICOLON, "Expected ';' after variable declaration");
+  if (is_array) {
+    return std::make_unique<VarDeclNode>(id_tok.line, type, id_tok.text,
+                                         array_size, std::move(init));
+  }
   return std::make_unique<VarDeclNode>(id_tok.line, type, id_tok.text,
                                        std::move(init));
 }

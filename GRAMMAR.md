@@ -43,7 +43,10 @@ param
     ::= type_specifier IDENTIFIER ;
 
 var_decl
-    ::= type_specifier IDENTIFIER ( "=" expr )? ";" ;
+    ::= type_specifier IDENTIFIER ( "[" ( INT_LIT )? "]" )? ( "=" ( expr | init_list ) )? ";" ;
+
+init_list
+    ::= "{" ( expr ( "," expr )* ( "," )? )? "}" ;
 
 type_specifier
     ::= "void"
@@ -101,8 +104,11 @@ expr
     ::= assignment ;
 
 assignment
-    ::= IDENTIFIER "=" assignment
+    ::= ( IDENTIFIER | array_access ) "=" assignment
       | logical_or ;
+
+array_access
+    ::= IDENTIFIER "[" expr "]" ( "[" expr "]" )* ;
 
 logical_or
     ::= logical_and ( "||" logical_and )* ;
@@ -127,7 +133,7 @@ unary
       | primary ;
 
 primary
-    ::= IDENTIFIER ( "(" ( expr ( "," expr )* )? ")" )?
+    ::= IDENTIFIER ( "(" ( expr ( "," expr )* )? ")" | ( "[" expr "]" )+ )?
       | INT_LIT
       | "(" expr ")" ;
 ```
@@ -194,7 +200,11 @@ The parser maps the grammar into the following AST node representations defined 
 | :--- | :--- | :--- |
 | `Program` | `program` | Array of top-level statement nodes (`statements`) |
 | `Compound` | `compound_stmt` (`{ ... }`) | Array of enclosed statement nodes (`statements`) |
-| `VarDecl` | `var_decl` (`int x [= expr];`) | Variable name (`name`), optional initializer (`init`) |
+| `VarDecl` | `var_decl` (`int x;`, `int a[3];`) | Variable name (`name`), type (`data_type`), `is_array`, `array_size`, optional initializer (`init`) |
+| `FuncDef` | `func_def` (`int foo(int x) { ... }`) | Return type (`return_type`), name (`name`), parameters (`params`), body (`body`) |
+| `Call` | `primary` (`foo(x, 1)`) | Callee identifier (`callee`), argument expressions (`args`) |
+| `ArrayAccess` | `primary` / `array_access` (`a[i]`) | Base array expression (`array`), index expression (`index`) |
+| `InitList` | `init_list` (`{1, 2, 3}`) | List of element expressions (`elements`) |
 | `If` | `if_stmt` (`if (...) ... else ...`) | `cond`, `then_branch`, optional `else_branch` |
 | `For` | `for_stmt` (`for (...; ...; ...) ...`) | `init`, `cond`, `step`, `body` |
 | `While` | `while_stmt` (`while (...) ...`) | `cond`, `body` |
@@ -206,7 +216,7 @@ The parser maps the grammar into the following AST node representations defined 
 | `Goto` | `goto_stmt` (`goto label;`) | Target label identifier (`label`) |
 | `Label` | `label_stmt` (`label:`) | Label identifier (`name`) |
 | `Return` | `return_stmt` (`return expr;`) | Return value expression (`expr`) |
-| `Assign` | `assignment` (`id = expr`) | Target identifier (`left`), value expression (`right`) |
+| `Assign` | `assignment` (`id = expr`, `a[i] = expr`) | Target lvalue expression (`left`), value expression (`right`) |
 | `BinaryOp` | Binary expressions (`+`, `-`, `*`, `&&`, etc.) | Operator token (`op`), `left`, `right` |
 | `UnaryOp` | Prefix unary expressions (`-`, `!`, etc.) | Operator token (`op`), `expr` |
 | `Identifier` | Variable reference (`IDENTIFIER`) | Name (`name`) |
@@ -218,7 +228,7 @@ The parser maps the grammar into the following AST node representations defined 
 
 The lexer ([`lexer.cpp`](file:///c:/Work/CCompiler/lexer.cpp)) scans a broader subset of C that is **not yet supported** by the recursive descent parser:
 
-1. **Additional Keywords Lexed:** `auto`, `char`, `const`, `double`, `enum`, `extern`, `float`, `register`, `signed`, `sizeof`, `static`, `struct`, `typedef`, `union`, `unsigned`, `void`, `volatile`.
+1. **Additional Keywords Lexed:** `auto`, `char`, `const`, `double`, `enum`, `extern`, `float`, `register`, `signed`, `sizeof`, `static`, `struct`, `typedef`, `union`, `unsigned`, `volatile`.
 2. **Literals Lexed:** String literals (`"..."`) and character literals (`'...'`) are scanned by the lexer, but rejected by `parse_primary`.
-3. **Operators Lexed:** Increment/decrement (`++`, `--`), bitwise operators (`&`, `|`, `^`, `<<`, `>>`), member access (`.`, `->`), brackets (`[`, `]`), commas (`,`), and preprocessor hash (`#`) are tokenized by the lexer, but not accepted in expressions by the parser.
-4. **Functions:** Function definitions, declarations, parameters, and function calls (`foo(...)`) are not yet part of the grammar. Top-level statements are parsed directly into the program body.
+3. **Operators Lexed:** Increment/decrement (`++`, `--`), bitwise operators (`&`, `|`, `^`, `<<`, `>>`), member access (`.`, `->`), and preprocessor hash (`#`) are tokenized by the lexer, but not accepted in expressions by the parser.
+4. **Pointer Types & Structs:** Pointers (`*`), address-of (`&`), dereference (`*`), and `struct` member definitions are not yet implemented.

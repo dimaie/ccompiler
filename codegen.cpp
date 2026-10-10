@@ -65,6 +65,14 @@ void ICodeGenerator::visit(const CallNode &node) {
   unsupported(node, "function call");
 }
 
+void ICodeGenerator::visit(const ArrayAccessNode &node) {
+  unsupported(node, "array access");
+}
+
+void ICodeGenerator::visit(const InitListNode &node) {
+  unsupported(node, "initializer list");
+}
+
 void ICodeGenerator::visit(const IfNode &node) {
   unsupported(node, "if statement");
 }

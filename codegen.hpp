@@ -80,6 +80,8 @@ public:
   void visit(const VarDeclNode &node) override;
   void visit(const FuncDefNode &node) override;
   void visit(const CallNode &node) override;
+  void visit(const ArrayAccessNode &node) override;
+  void visit(const InitListNode &node) override;
   void visit(const IfNode &node) override;
   void visit(const ForNode &node) override;
   void visit(const WhileNode &node) override;
