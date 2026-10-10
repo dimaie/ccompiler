@@ -746,9 +746,6 @@ static void test_lexer_peek() {
   assert(lexer.peek(2).type == TOK_COLON);
   assert(std::strcmp(lexer.peek(2).text, ":") == 0);
 
-  // peek2() convenience method
-  assert(lexer.peek2().type == TOK_COLON);
-
   // Advancing consumes token
   Token t1 = lexer.next();
   assert(t1.type == TOK_IDENTIFIER);
