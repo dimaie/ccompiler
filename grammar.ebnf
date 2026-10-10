@@ -25,7 +25,12 @@ statement
     | empty_stmt ;
 
 var_decl
-    = "int" , IDENTIFIER , [ "=" , expr ] , ";" ;
+    = type_specifier , IDENTIFIER , [ "=" , expr ] , ";" ;
+
+type_specifier
+    = "int"
+    | "short" , [ "int" ]
+    | "long" , [ "long" ] , [ "int" ] ;
 
 if_stmt
     = "if" , "(" , expr , ")" , statement , [ "else" , statement ] ;

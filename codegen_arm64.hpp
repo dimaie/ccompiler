@@ -43,6 +43,7 @@ public:
 private:
   std::ostream *out_{nullptr};
   std::unordered_map<std::string, int> var_offsets_;
+  std::unordered_map<std::string, DataType> var_types_;
   int current_offset_{0};
   int label_counter_{0};
   std::string ret_label_{".Lmain_arm_ret"};
@@ -53,6 +54,7 @@ private:
   void emit_line(const std::string &inst);
   void emit_raw(const std::string &line);
   int get_var_offset(const std::string &name);
+  DataType get_var_type(const std::string &name) const;
 };
 
 #endif // CODEGEN_ARM64_HPP

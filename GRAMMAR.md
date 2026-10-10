@@ -33,7 +33,12 @@ statement
       | empty_stmt ;
 
 var_decl
-    ::= "int" IDENTIFIER ( "=" expr )? ";" ;
+    ::= type_specifier IDENTIFIER ( "=" expr )? ";" ;
+
+type_specifier
+    ::= "int"
+      | "short" ( "int" )?
+      | "long" ( "long" )? ( "int" )? ;
 
 if_stmt
     ::= "if" "(" expr ")" statement ( "else" statement )? ;
@@ -145,6 +150,8 @@ Operators supported by the parser, ordered from highest to lowest precedence:
 | `IDENTIFIER` | `[a-zA-Z_][a-zA-Z0-9_]*` (not a keyword) | Variable/label identifier (up to 63 chars) |
 | `INT_LIT` | `0[xX][0-9a-fA-F]+ \| [0-9]+` | Integer literal (decimal, hex, octal) |
 | `"int"` | Keyword `int` (`TOK_KW_INT`) | Type specifier for variable declaration |
+| `"short"` | Keyword `short` (`TOK_KW_SHORT`) | Short integer modifier / type specifier |
+| `"long"` | Keyword `long` (`TOK_KW_LONG`) | Long integer modifier / type specifier |
 | `"if"` | Keyword `if` (`TOK_KW_IF`) | Conditional statement |
 | `"else"` | Keyword `else` (`TOK_KW_ELSE`) | Alternative branch for conditional |
 | `"for"` | Keyword `for` (`TOK_KW_FOR`) | For loop iteration statement |
@@ -200,7 +207,7 @@ The parser maps the grammar into the following AST node representations defined 
 
 The lexer ([`lexer.cpp`](file:///c:/Work/CCompiler/lexer.cpp)) scans a broader subset of C that is **not yet supported** by the recursive descent parser:
 
-1. **Additional Keywords Lexed:** `auto`, `char`, `const`, `double`, `enum`, `extern`, `float`, `long`, `register`, `short`, `signed`, `sizeof`, `static`, `struct`, `typedef`, `union`, `unsigned`, `void`, `volatile`.
+1. **Additional Keywords Lexed:** `auto`, `char`, `const`, `double`, `enum`, `extern`, `float`, `register`, `signed`, `sizeof`, `static`, `struct`, `typedef`, `union`, `unsigned`, `void`, `volatile`.
 2. **Literals Lexed:** String literals (`"..."`) and character literals (`'...'`) are scanned by the lexer, but rejected by `parse_primary`.
 3. **Operators Lexed:** Increment/decrement (`++`, `--`), bitwise operators (`&`, `|`, `^`, `<<`, `>>`), member access (`.`, `->`), brackets (`[`, `]`), commas (`,`), and preprocessor hash (`#`) are tokenized by the lexer, but not accepted in expressions by the parser.
 4. **Functions:** Function definitions, declarations, parameters, and function calls (`foo(...)`) are not yet part of the grammar. Top-level statements are parsed directly into the program body.

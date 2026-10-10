@@ -114,6 +114,18 @@ static void test_x86_64_codegen() {
     assert(cg_asm.find(".Luser_loop_start:") != std::string::npos);
     assert(cg_asm.find("jmp .Luser_loop_start") != std::string::npos);
   }
+
+  // Test short and long modifiers
+  {
+    auto type_prog = parse("short s = 10;\n"
+                           "long l = 20;\n"
+                           "s = s + 1;\n"
+                           "return s + l;\n");
+    std::string type_asm = gen->generate_to_string(*type_prog);
+    assert(type_asm.find("movw %ax,") != std::string::npos);
+    assert(type_asm.find("movswq") != std::string::npos);
+    assert(type_asm.find("movq") != std::string::npos);
+  }
 }
 
 static void test_arm64_codegen() {
@@ -185,6 +197,18 @@ static void test_arm64_codegen() {
     assert(cg_asm.find(".Luser_my_label:") != std::string::npos);
     assert(cg_asm.find("b .Luser_my_label") != std::string::npos);
   }
+
+  // Test short and long modifiers
+  {
+    auto type_prog = parse("short s = 10;\n"
+                           "long l = 20;\n"
+                           "s = s + 1;\n"
+                           "return s + l;\n");
+    std::string type_asm = gen->generate_to_string(*type_prog);
+    assert(type_asm.find("strh w0,") != std::string::npos);
+    assert(type_asm.find("ldrsh x0,") != std::string::npos);
+    assert(type_asm.find("str x0,") != std::string::npos);
+  }
 }
 
 static void test_avr_codegen() {
@@ -254,6 +278,15 @@ static void test_avr_codegen() {
     assert(cg_asm.find(".Luser_target:") != std::string::npos);
     assert(cg_asm.find("rjmp .Luser_target") != std::string::npos);
   }
+
+  // Test short modifier
+  {
+    auto type_prog = parse("short s = 10;\n"
+                           "return s;\n");
+    std::string type_asm = gen->generate_to_string(*type_prog);
+    assert(type_asm.find("std Y+") != std::string::npos);
+    assert(type_asm.find("ldd r24,") != std::string::npos);
+  }
 }
 
 static void test_c_codegen() {
@@ -315,6 +348,18 @@ static void test_c_codegen() {
     assert(cg_c.find("continue;") != std::string::npos);
     assert(cg_c.find("start:") != std::string::npos);
     assert(cg_c.find("goto start;") != std::string::npos);
+  }
+
+  // Test short and long modifiers
+  {
+    auto type_prog = parse("short s = 10;\n"
+                           "long l = 20;\n"
+                           "long long ll = 30;\n"
+                           "return s + l + ll;\n");
+    std::string type_c = gen->generate_to_string(*type_prog);
+    assert(type_c.find("short s = 10;") != std::string::npos);
+    assert(type_c.find("long l = 20;") != std::string::npos);
+    assert(type_c.find("long long ll = 30;") != std::string::npos);
   }
 }
 
@@ -484,6 +529,21 @@ static void test_unsupported_features() {
       threw = true;
       assert(e.get_arch() == "arm64");
       assert(e.get_line() == 15);
+    }
+    assert(threw);
+  }
+
+  // 5. Unsupported long modifier on AVR
+  {
+    auto avr = CodeGeneratorFactory::create("avr");
+    auto prog = parse("long x = 10;\nreturn x;\n");
+    bool threw = false;
+    try {
+      avr->generate_to_string(*prog);
+    } catch (const UnsupportedFeatureException &e) {
+      threw = true;
+      assert(e.get_feature() == "type modifier 'long'");
+      assert(e.get_arch() == "avr");
     }
     assert(threw);
   }

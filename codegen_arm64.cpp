@@ -24,10 +24,19 @@ int ARM64CodeGenerator::get_var_offset(const std::string &name) {
   return current_offset_;
 }
 
+DataType ARM64CodeGenerator::get_var_type(const std::string &name) const {
+  auto it = var_types_.find(name);
+  if (it != var_types_.end()) {
+    return it->second;
+  }
+  return DataType::Int;
+}
+
 void ARM64CodeGenerator::generate(const ProgramNode &program,
                                   std::ostream &out) {
   out_ = &out;
   var_offsets_.clear();
+  var_types_.clear();
   current_offset_ = 8; // offset 0 and 8 reserved for saved x29, x30
   label_counter_ = 0;
   break_stack_.clear();
@@ -73,10 +82,15 @@ void ARM64CodeGenerator::visit(const CompoundNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const VarDeclNode &node) {
+  var_types_[node.name] = node.data_type;
   int offset = get_var_offset(node.name);
   if (node.init) {
     node.init->accept(*this);
-    emit_line("str x0, [x29, #" + std::to_string(offset) + "]");
+    if (node.data_type == DataType::Short) {
+      emit_line("strh w0, [x29, #" + std::to_string(offset) + "]");
+    } else {
+      emit_line("str x0, [x29, #" + std::to_string(offset) + "]");
+    }
   }
 }
 
@@ -90,7 +104,11 @@ void ARM64CodeGenerator::visit(const AssignNode &node) {
   if (node.right) {
     node.right->accept(*this);
   }
-  emit_line("str x0, [x29, #" + std::to_string(offset) + "]");
+  if (get_var_type(ident->name) == DataType::Short) {
+    emit_line("strh w0, [x29, #" + std::to_string(offset) + "]");
+  } else {
+    emit_line("str x0, [x29, #" + std::to_string(offset) + "]");
+  }
 }
 
 void ARM64CodeGenerator::visit(const IntLitNode &node) {
@@ -103,7 +121,11 @@ void ARM64CodeGenerator::visit(const IntLitNode &node) {
 
 void ARM64CodeGenerator::visit(const IdentifierNode &node) {
   int offset = get_var_offset(node.name);
-  emit_line("ldr x0, [x29, #" + std::to_string(offset) + "]");
+  if (get_var_type(node.name) == DataType::Short) {
+    emit_line("ldrsh x0, [x29, #" + std::to_string(offset) + "]");
+  } else {
+    emit_line("ldr x0, [x29, #" + std::to_string(offset) + "]");
+  }
 }
 
 void ARM64CodeGenerator::visit(const UnaryOpNode &node) {

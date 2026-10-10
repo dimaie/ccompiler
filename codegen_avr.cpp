@@ -84,6 +84,9 @@ void AVRCodeGenerator::visit(const CompoundNode &node) {
 }
 
 void AVRCodeGenerator::visit(const VarDeclNode &node) {
+  if (node.data_type == DataType::Long || node.data_type == DataType::LongLong) {
+    unsupported(node, "type modifier 'long'");
+  }
   int offset = get_var_offset(node.name);
   if (node.init) {
     node.init->accept(*this);

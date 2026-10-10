@@ -34,7 +34,7 @@ std::unique_ptr<ForNode> Parser::parse_for() {
 
   // 1. Init: var_decl | (expr)? ';'
   std::unique_ptr<ASTNode> init = nullptr;
-  if (peek().type == TOK_KW_INT) {
+  if (is_type_specifier(peek().type)) {
     init = parse_var_decl();
   } else if (match(TOK_SEMICOLON)) {
     init = nullptr;
@@ -168,7 +168,7 @@ std::unique_ptr<ReturnNode> Parser::parse_return() {
 std::unique_ptr<ASTNode> Parser::parse_statement() {
   Token t = peek();
 
-  if (t.type == TOK_KW_INT) {
+  if (is_type_specifier(t.type)) {
     return parse_var_decl();
   }
   if (t.type == TOK_KW_FOR) {

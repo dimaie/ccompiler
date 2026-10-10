@@ -23,10 +23,19 @@ int X86_64CodeGenerator::get_var_offset(const std::string &name) {
   return current_offset_;
 }
 
+DataType X86_64CodeGenerator::get_var_type(const std::string &name) const {
+  auto it = var_types_.find(name);
+  if (it != var_types_.end()) {
+    return it->second;
+  }
+  return DataType::Int;
+}
+
 void X86_64CodeGenerator::generate(const ProgramNode &program,
                                    std::ostream &out) {
   out_ = &out;
   var_offsets_.clear();
+  var_types_.clear();
   current_offset_ = 0;
   label_counter_ = 0;
   break_stack_.clear();
@@ -62,10 +71,15 @@ void X86_64CodeGenerator::visit(const CompoundNode &node) {
 }
 
 void X86_64CodeGenerator::visit(const VarDeclNode &node) {
+  var_types_[node.name] = node.data_type;
   int offset = get_var_offset(node.name);
   if (node.init) {
     node.init->accept(*this);
-    emit_line("movq %rax, -" + std::to_string(offset) + "(%rbp)");
+    if (node.data_type == DataType::Short) {
+      emit_line("movw %ax, -" + std::to_string(offset) + "(%rbp)");
+    } else {
+      emit_line("movq %rax, -" + std::to_string(offset) + "(%rbp)");
+    }
   }
 }
 
@@ -79,7 +93,11 @@ void X86_64CodeGenerator::visit(const AssignNode &node) {
   if (node.right) {
     node.right->accept(*this);
   }
-  emit_line("movq %rax, -" + std::to_string(offset) + "(%rbp)");
+  if (get_var_type(ident->name) == DataType::Short) {
+    emit_line("movw %ax, -" + std::to_string(offset) + "(%rbp)");
+  } else {
+    emit_line("movq %rax, -" + std::to_string(offset) + "(%rbp)");
+  }
 }
 
 void X86_64CodeGenerator::visit(const IntLitNode &node) {
@@ -88,7 +106,11 @@ void X86_64CodeGenerator::visit(const IntLitNode &node) {
 
 void X86_64CodeGenerator::visit(const IdentifierNode &node) {
   int offset = get_var_offset(node.name);
-  emit_line("movq -" + std::to_string(offset) + "(%rbp), %rax");
+  if (get_var_type(node.name) == DataType::Short) {
+    emit_line("movswq -" + std::to_string(offset) + "(%rbp), %rax");
+  } else {
+    emit_line("movq -" + std::to_string(offset) + "(%rbp), %rax");
+  }
 }
 
 void X86_64CodeGenerator::visit(const UnaryOpNode &node) {

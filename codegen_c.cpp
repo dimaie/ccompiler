@@ -62,7 +62,7 @@ void CCodeGenerator::visit(const CompoundNode &node) {
 }
 
 void CCodeGenerator::visit(const VarDeclNode &node) {
-  *out_ << "int " << node.name;
+  *out_ << data_type_str(node.data_type) << " " << node.name;
   if (node.init) {
     *out_ << " = ";
     node.init->accept(*this);

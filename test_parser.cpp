@@ -63,6 +63,47 @@ static void test_var_decl_node() {
     assert(var->init != nullptr);
     assert(var->init->getType() == ASTNodeType::BinaryOp);
   }
+
+  // Short declarations
+  {
+    auto prog = parse_source("short s = 10;\nshort int si = 20;\n");
+    assert(prog->statements.size() == 2);
+    auto *var1 = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var1->name == "s");
+    assert(var1->data_type == DataType::Short);
+    auto *var2 = static_cast<VarDeclNode *>(prog->statements[1].get());
+    assert(var2->name == "si");
+    assert(var2->data_type == DataType::Short);
+  }
+
+  // Long and Long Long declarations
+  {
+    auto prog = parse_source("long l = 100;\nlong int li = 200;\nlong long ll = 300;\nlong long int lli = 400;\n");
+    assert(prog->statements.size() == 4);
+    auto *var1 = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var1->name == "l");
+    assert(var1->data_type == DataType::Long);
+    auto *var2 = static_cast<VarDeclNode *>(prog->statements[1].get());
+    assert(var2->name == "li");
+    assert(var2->data_type == DataType::Long);
+    auto *var3 = static_cast<VarDeclNode *>(prog->statements[2].get());
+    assert(var3->name == "ll");
+    assert(var3->data_type == DataType::LongLong);
+    auto *var4 = static_cast<VarDeclNode *>(prog->statements[3].get());
+    assert(var4->name == "lli");
+    assert(var4->data_type == DataType::LongLong);
+  }
+
+  // Short declaration in for loop
+  {
+    auto prog = parse_source("for (short i = 0; i < 5; i = i + 1) {}\n");
+    assert(prog->statements.size() == 1);
+    auto *for_node = static_cast<ForNode *>(prog->statements[0].get());
+    assert(for_node->init->getType() == ASTNodeType::VarDecl);
+    auto *var = static_cast<VarDeclNode *>(for_node->init.get());
+    assert(var->name == "i");
+    assert(var->data_type == DataType::Short);
+  }
 }
 
 static void test_if_node() {

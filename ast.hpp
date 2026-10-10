@@ -30,6 +30,27 @@ enum class ASTNodeType {
   Identifier
 };
 
+enum class DataType {
+  Int,
+  Short,
+  Long,
+  LongLong
+};
+
+inline const char *data_type_str(DataType type) {
+  switch (type) {
+  case DataType::Short:
+    return "short";
+  case DataType::Long:
+    return "long";
+  case DataType::LongLong:
+    return "long long";
+  case DataType::Int:
+  default:
+    return "int";
+  }
+}
+
 inline const char *token_op_str(TokenType op) {
   switch (op) {
   case TOK_PLUS:
@@ -191,19 +212,25 @@ public:
 
 class VarDeclNode : public ASTNode {
 public:
+  DataType data_type{DataType::Int};
   std::string name;
   std::unique_ptr<ASTNode> init;
 
+  VarDeclNode(int line, DataType data_type, std::string name,
+              std::unique_ptr<ASTNode> init = nullptr)
+      : ASTNode(line), data_type(data_type), name(std::move(name)),
+        init(std::move(init)) {}
+
   VarDeclNode(int line, std::string name,
               std::unique_ptr<ASTNode> init = nullptr)
-      : ASTNode(line), name(std::move(name)), init(std::move(init)) {}
+      : VarDeclNode(line, DataType::Int, std::move(name), std::move(init)) {}
 
   ASTNodeType getType() const override { return ASTNodeType::VarDecl; }
   void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
 
   void print(int indent = 0) const override {
     print_indent(indent);
-    std::cout << "VarDecl (" << name << ")\n";
+    std::cout << "VarDecl (" << data_type_str(data_type) << " " << name << ")\n";
     if (init) {
       init->print(indent + 1);
     }

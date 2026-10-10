@@ -34,6 +34,8 @@ public:
   std::unique_ptr<CompoundNode> parse_compound_statement();
 
   // Declarations (implemented in parser_decl.cpp)
+  bool is_type_specifier(TokenType type) const;
+  DataType parse_type_specifier();
   std::unique_ptr<VarDeclNode> parse_var_decl();
 
   // Expressions (implemented in parser_expr.cpp)
