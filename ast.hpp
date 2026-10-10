@@ -88,6 +88,8 @@ inline const char *token_op_str(TokenType op) {
     return "||";
   case TOK_LOGIC_NOT:
     return "!";
+  case TOK_AMP:
+    return "&";
   case TOK_TILDE:
     return "~";
   case TOK_ASSIGN:
@@ -228,19 +230,29 @@ public:
 class VarDeclNode : public ASTNode {
 public:
   DataType data_type{DataType::Int};
+  int pointer_level{0};
   std::string name;
   std::unique_ptr<ASTNode> init;
   bool is_array{false};
   int array_size{0};
+  bool is_func_ptr{false};
+  DataType func_ptr_ret_type{DataType::Int};
+  int func_ptr_ret_pointer_level{0};
+  std::vector<DataType> func_ptr_params;
 
   VarDeclNode(int line, DataType data_type, std::string name,
               std::unique_ptr<ASTNode> init = nullptr)
-      : ASTNode(line), data_type(data_type), name(std::move(name)),
+      : ASTNode(line), data_type(data_type), pointer_level(0), name(std::move(name)),
         init(std::move(init)), is_array(false), array_size(0) {}
+
+  VarDeclNode(int line, DataType data_type, int pointer_level, std::string name,
+              std::unique_ptr<ASTNode> init = nullptr)
+      : ASTNode(line), data_type(data_type), pointer_level(pointer_level),
+        name(std::move(name)), init(std::move(init)), is_array(false), array_size(0) {}
 
   VarDeclNode(int line, DataType data_type, std::string name, int array_size,
               std::unique_ptr<ASTNode> init = nullptr)
-      : ASTNode(line), data_type(data_type), name(std::move(name)),
+      : ASTNode(line), data_type(data_type), pointer_level(0), name(std::move(name)),
         init(std::move(init)), is_array(true), array_size(array_size) {}
 
   VarDeclNode(int line, std::string name,
@@ -252,11 +264,16 @@ public:
 
   void print(int indent = 0) const override {
     print_indent(indent);
-    if (is_array) {
-      std::cout << "VarDecl (" << data_type_str(data_type) << " " << name
-                << "[" << array_size << "])\n";
+    if (is_func_ptr) {
+      std::cout << "VarDecl (func_ptr " << name << ")\n";
+    } else if (is_array) {
+      std::cout << "VarDecl (" << data_type_str(data_type);
+      for (int i = 0; i < pointer_level; ++i) std::cout << "*";
+      std::cout << " " << name << "[" << array_size << "])\n";
     } else {
-      std::cout << "VarDecl (" << data_type_str(data_type) << " " << name << ")\n";
+      std::cout << "VarDecl (" << data_type_str(data_type);
+      for (int i = 0; i < pointer_level; ++i) std::cout << "*";
+      std::cout << " " << name << ")\n";
     }
     if (init) {
       init->print(indent + 1);
@@ -266,20 +283,28 @@ public:
 
 struct Param {
   DataType type;
+  int pointer_level{0};
   std::string name;
   int line{0};
+  bool is_func_ptr{false};
+  DataType func_ptr_ret_type{DataType::Int};
+  int func_ptr_ret_pointer_level{0};
+  std::vector<DataType> func_ptr_params;
 };
 
 class FuncDefNode : public ASTNode {
 public:
   DataType return_type;
+  int return_pointer_level{0};
   std::string name;
   std::vector<Param> params;
   std::unique_ptr<CompoundNode> body;
 
   FuncDefNode(int line, DataType return_type, std::string name,
-              std::vector<Param> params, std::unique_ptr<CompoundNode> body)
-      : ASTNode(line), return_type(return_type), name(std::move(name)),
+              std::vector<Param> params, std::unique_ptr<CompoundNode> body,
+              int return_pointer_level = 0)
+      : ASTNode(line), return_type(return_type),
+        return_pointer_level(return_pointer_level), name(std::move(name)),
         params(std::move(params)), body(std::move(body)) {}
 
   ASTNodeType getType() const override { return ASTNodeType::FuncDef; }
@@ -692,18 +717,28 @@ public:
 class CallNode : public ASTNode {
 public:
   std::string callee;
+  std::unique_ptr<ASTNode> callee_expr{nullptr};
   std::vector<std::unique_ptr<ASTNode>> args;
 
   CallNode(int line, std::string callee,
            std::vector<std::unique_ptr<ASTNode>> args)
-      : ASTNode(line), callee(std::move(callee)), args(std::move(args)) {}
+      : ASTNode(line), callee(std::move(callee)), callee_expr(nullptr), args(std::move(args)) {}
+
+  CallNode(int line, std::unique_ptr<ASTNode> callee_expr,
+           std::vector<std::unique_ptr<ASTNode>> args)
+      : ASTNode(line), callee(""), callee_expr(std::move(callee_expr)), args(std::move(args)) {}
 
   ASTNodeType getType() const override { return ASTNodeType::Call; }
   void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
 
   void print(int indent = 0) const override {
     print_indent(indent);
-    std::cout << "Call (" << callee << ")\n";
+    if (callee_expr) {
+      std::cout << "Call (indirect)\n";
+      callee_expr->print(indent + 1);
+    } else {
+      std::cout << "Call (" << callee << ")\n";
+    }
     for (const auto &arg : args) {
       if (arg) {
         arg->print(indent + 1);

@@ -87,7 +87,14 @@ void CCodeGenerator::visit(const ProgramNode &node) {
 }
 
 void CCodeGenerator::visit(const FuncDefNode &node) {
-  *out_ << data_type_str(node.return_type) << " " << node.name << "(";
+  *out_ << data_type_str(node.return_type);
+  if (node.return_pointer_level > 0) {
+    *out_ << " ";
+    for (int i = 0; i < node.return_pointer_level; ++i) *out_ << "*";
+    *out_ << node.name << "(";
+  } else {
+    *out_ << " " << node.name << "(";
+  }
   if (node.params.empty()) {
     *out_ << "void";
   } else {
@@ -95,7 +102,31 @@ void CCodeGenerator::visit(const FuncDefNode &node) {
       if (i > 0) {
         *out_ << ", ";
       }
-      *out_ << data_type_str(node.params[i].type) << " " << node.params[i].name;
+      const auto &p = node.params[i];
+      if (p.is_func_ptr) {
+        *out_ << data_type_str(p.func_ptr_ret_type);
+        if (p.func_ptr_ret_pointer_level > 0) {
+          *out_ << " ";
+          for (int j = 0; j < p.func_ptr_ret_pointer_level; ++j) *out_ << "*";
+          *out_ << "(*" << p.name << ")(";
+        } else {
+          *out_ << " (*" << p.name << ")(";
+        }
+        for (size_t j = 0; j < p.func_ptr_params.size(); ++j) {
+          if (j > 0) *out_ << ", ";
+          *out_ << data_type_str(p.func_ptr_params[j]);
+        }
+        *out_ << ")";
+      } else {
+        *out_ << data_type_str(p.type);
+        if (p.pointer_level > 0) {
+          *out_ << " ";
+          for (int j = 0; j < p.pointer_level; ++j) *out_ << "*";
+          *out_ << p.name;
+        } else {
+          *out_ << " " << p.name;
+        }
+      }
     }
   }
   *out_ << ") ";
@@ -106,7 +137,12 @@ void CCodeGenerator::visit(const FuncDefNode &node) {
 }
 
 void CCodeGenerator::visit(const CallNode &node) {
-  *out_ << node.callee << "(";
+  if (node.callee_expr) {
+    node.callee_expr->accept(*this);
+    *out_ << "(";
+  } else {
+    *out_ << node.callee << "(";
+  }
   for (size_t i = 0; i < node.args.size(); ++i) {
     if (i > 0) {
       *out_ << ", ";
@@ -145,9 +181,32 @@ void CCodeGenerator::visit(const CompoundNode &node) {
 }
 
 void CCodeGenerator::visit(const VarDeclNode &node) {
-  *out_ << data_type_str(node.data_type) << " " << node.name;
-  if (node.is_array) {
-    *out_ << "[" << node.array_size << "]";
+  if (node.is_func_ptr) {
+    *out_ << data_type_str(node.func_ptr_ret_type);
+    if (node.func_ptr_ret_pointer_level > 0) {
+      *out_ << " ";
+      for (int i = 0; i < node.func_ptr_ret_pointer_level; ++i) *out_ << "*";
+      *out_ << "(*" << node.name << ")(";
+    } else {
+      *out_ << " (*" << node.name << ")(";
+    }
+    for (size_t i = 0; i < node.func_ptr_params.size(); ++i) {
+      if (i > 0) *out_ << ", ";
+      *out_ << data_type_str(node.func_ptr_params[i]);
+    }
+    *out_ << ")";
+  } else {
+    *out_ << data_type_str(node.data_type);
+    if (node.pointer_level > 0) {
+      *out_ << " ";
+      for (int i = 0; i < node.pointer_level; ++i) *out_ << "*";
+      *out_ << node.name;
+    } else {
+      *out_ << " " << node.name;
+    }
+    if (node.is_array) {
+      *out_ << "[" << node.array_size << "]";
+    }
   }
   if (node.init) {
     *out_ << " = ";
@@ -194,6 +253,12 @@ void CCodeGenerator::visit(const IdentifierNode &node) {
 }
 
 void CCodeGenerator::visit(const UnaryOpNode &node) {
+  if (node.op == TOK_STAR) {
+    *out_ << "(*";
+    if (node.expr) node.expr->accept(*this);
+    *out_ << ")";
+    return;
+  }
   *out_ << token_op_str(node.op);
   if (node.expr) node.expr->accept(*this);
 }

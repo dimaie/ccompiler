@@ -1063,6 +1063,138 @@ static void test_array_node() {
   }
 }
 
+static void test_pointer_node() {
+  std::cout << "Testing Pointers (Declarations, Address-of, Dereference)...\n";
+
+  // Pointer variable declarations
+  {
+    auto prog = parse_source("int *p;\nint **pp;\nshort *sp;\nvoid *vp;\n");
+    assert(prog->statements.size() == 4);
+
+    auto *p = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(p->name == "p");
+    assert(p->pointer_level == 1);
+    assert(p->data_type == DataType::Int);
+
+    auto *pp = static_cast<VarDeclNode *>(prog->statements[1].get());
+    assert(pp->name == "pp");
+    assert(pp->pointer_level == 2);
+    assert(pp->data_type == DataType::Int);
+
+    auto *sp = static_cast<VarDeclNode *>(prog->statements[2].get());
+    assert(sp->name == "sp");
+    assert(sp->pointer_level == 1);
+    assert(sp->data_type == DataType::Short);
+
+    auto *vp = static_cast<VarDeclNode *>(prog->statements[3].get());
+    assert(vp->name == "vp");
+    assert(vp->pointer_level == 1);
+    assert(vp->data_type == DataType::Void);
+  }
+
+  // Pointer initialization with address-of
+  {
+    auto prog = parse_source("int x = 10;\nint *p = &x;\n");
+    assert(prog->statements.size() == 2);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[1].get());
+    assert(var->init != nullptr);
+    assert(var->init->getType() == ASTNodeType::UnaryOp);
+    auto *unary = static_cast<UnaryOpNode *>(var->init.get());
+    assert(unary->op == TOK_AMP);
+    assert(unary->expr->getType() == ASTNodeType::Identifier);
+  }
+
+  // Dereference read and dereference assignment
+  {
+    auto prog = parse_source("*p = 42;\nint y = *p + 1;\n");
+    assert(prog->statements.size() == 2);
+
+    auto *assign = static_cast<AssignNode *>(prog->statements[0].get());
+    assert(assign->left->getType() == ASTNodeType::UnaryOp);
+    auto *lhs_deref = static_cast<UnaryOpNode *>(assign->left.get());
+    assert(lhs_deref->op == TOK_STAR);
+
+    auto *var_y = static_cast<VarDeclNode *>(prog->statements[1].get());
+    assert(var_y->init->getType() == ASTNodeType::BinaryOp);
+  }
+
+  // Function with pointer parameters and return type
+  {
+    auto prog = parse_source("int *get_ptr(int *a, int **b) {\nreturn a;\n}\n");
+    assert(prog->statements.size() == 1);
+    auto *fn = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(fn->name == "get_ptr");
+    assert(fn->return_type == DataType::Int);
+    assert(fn->return_pointer_level == 1);
+    assert(fn->params.size() == 2);
+    assert(fn->params[0].pointer_level == 1);
+    assert(fn->params[1].pointer_level == 2);
+  }
+}
+
+static void test_func_ptr_node() {
+  std::cout << "Testing Function Pointers (Declarations and Calls)...\n";
+
+  // Function pointer declaration without init
+  {
+    auto prog = parse_source("int (*fp)(int, int);\n");
+    assert(prog->statements.size() == 1);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->name == "fp");
+    assert(var->is_func_ptr == true);
+    assert(var->func_ptr_ret_type == DataType::Int);
+    assert(var->func_ptr_params.size() == 2);
+    assert(var->init == nullptr);
+  }
+
+  // Function pointer declaration with direct symbol initialization
+  {
+    auto prog = parse_source("int (*fp)(int, int) = add;\n");
+    assert(prog->statements.size() == 1);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->is_func_ptr == true);
+    assert(var->init != nullptr);
+    assert(var->init->getType() == ASTNodeType::Identifier);
+    auto *id = static_cast<IdentifierNode *>(var->init.get());
+    assert(id->name == "add");
+  }
+
+  // Function pointer declaration with & symbol initialization
+  {
+    auto prog = parse_source("int (*fp)(int, int) = &add;\n");
+    assert(prog->statements.size() == 1);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->is_func_ptr == true);
+    assert(var->init != nullptr);
+    assert(var->init->getType() == ASTNodeType::UnaryOp);
+    auto *unary = static_cast<UnaryOpNode *>(var->init.get());
+    assert(unary->op == TOK_AMP);
+  }
+
+  // Indirect calls: (*fp)(1, 2)
+  {
+    auto prog = parse_source("int res = (*fp)(1, 2);\n");
+    assert(prog->statements.size() == 1);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->init->getType() == ASTNodeType::Call);
+    auto *call = static_cast<CallNode *>(var->init.get());
+    assert(call->callee_expr != nullptr);
+    assert(call->callee_expr->getType() == ASTNodeType::UnaryOp);
+    assert(call->args.size() == 2);
+  }
+
+  // Function parameter taking function pointer
+  {
+    auto prog = parse_source("int apply(int (*op)(int, int), int x, int y) {\nreturn op(x, y);\n}\n");
+    assert(prog->statements.size() == 1);
+    auto *fn = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(fn->params.size() == 3);
+    assert(fn->params[0].is_func_ptr == true);
+    assert(fn->params[0].name == "op");
+    assert(fn->params[0].func_ptr_params.size() == 2);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running AST & Parser Test Suite\n";
@@ -1092,9 +1224,11 @@ int main() {
   test_func_def_node();
   test_call_node();
   test_array_node();
+  test_pointer_node();
+  test_func_ptr_node();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (24/24)\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (26/26)\n";
   std::cout << "========================================\n";
   return 0;
 }

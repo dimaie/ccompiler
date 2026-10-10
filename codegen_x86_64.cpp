@@ -164,6 +164,7 @@ void X86_64CodeGenerator::visit(const FuncDefNode &node) {
   var_types_.clear();
   is_array_.clear();
   array_sizes_.clear();
+  is_func_ptr_.clear();
   current_offset_ = 0;
   break_stack_.clear();
   continue_stack_.clear();
@@ -188,6 +189,9 @@ void X86_64CodeGenerator::visit(const FuncDefNode &node) {
     if (i < 6) {
       const auto &p = node.params[i];
       var_types_[p.name] = p.type;
+      if (p.is_func_ptr) {
+        is_func_ptr_[p.name] = true;
+      }
       int offset = get_var_offset(p.name);
       emit_line("movq " + std::string(ARG_REGS[i]) + ", -" +
                 std::to_string(offset) + "(%rbp)");
@@ -212,6 +216,18 @@ void X86_64CodeGenerator::visit(const CallNode &node) {
     unsupported(node, "more than 6 function call arguments");
   }
 
+  bool is_indirect = false;
+  if (node.callee_expr) {
+    is_indirect = true;
+    node.callee_expr->accept(*this);
+    emit_line("pushq %rax");
+  } else if (!node.callee.empty() && var_offsets_.find(node.callee) != var_offsets_.end()) {
+    is_indirect = true;
+    int offset = get_var_offset(node.callee);
+    emit_line("movq -" + std::to_string(offset) + "(%rbp), %rax");
+    emit_line("pushq %rax");
+  }
+
   for (const auto &arg : node.args) {
     if (arg) {
       arg->accept(*this);
@@ -227,13 +243,24 @@ void X86_64CodeGenerator::visit(const CallNode &node) {
     emit_line("popq " + std::string(ARG_REGS[i]));
   }
 
-  emit_line("movq %rsp, %r11");
-  emit_line("andq $-16, %rsp");
-  emit_line("pushq %r11");
-  emit_line("subq $8, %rsp");
-  emit_line("call " + node.callee);
-  emit_line("addq $8, %rsp");
-  emit_line("popq %rsp");
+  if (is_indirect) {
+    emit_line("popq %r11");
+    emit_line("movq %rsp, %r10");
+    emit_line("andq $-16, %rsp");
+    emit_line("pushq %r10");
+    emit_line("subq $8, %rsp");
+    emit_line("call *%r11");
+    emit_line("addq $8, %rsp");
+    emit_line("popq %rsp");
+  } else {
+    emit_line("movq %rsp, %r11");
+    emit_line("andq $-16, %rsp");
+    emit_line("pushq %r11");
+    emit_line("subq $8, %rsp");
+    emit_line("call " + node.callee);
+    emit_line("addq $8, %rsp");
+    emit_line("popq %rsp");
+  }
 }
 
 void X86_64CodeGenerator::visit(const ProgramNode &node) {
@@ -254,10 +281,13 @@ void X86_64CodeGenerator::visit(const CompoundNode &node) {
 
 void X86_64CodeGenerator::visit(const VarDeclNode &node) {
   var_types_[node.name] = node.data_type;
+  if (node.is_func_ptr) {
+    is_func_ptr_[node.name] = true;
+  }
   if (node.is_array) {
     is_array_[node.name] = true;
     array_sizes_[node.name] = node.array_size;
-    int elem_size = (node.data_type == DataType::Short) ? 2 : 8;
+    int elem_size = (node.data_type == DataType::Short && node.pointer_level == 0) ? 2 : 8;
     current_offset_ += node.array_size * elem_size;
     if (current_offset_ % 8 != 0) {
       current_offset_ += 8 - (current_offset_ % 8);
@@ -271,7 +301,7 @@ void X86_64CodeGenerator::visit(const VarDeclNode &node) {
         if (init_list->elements[i]) {
           init_list->elements[i]->accept(*this);
           int elem_offset = base_offset - static_cast<int>(i) * elem_size;
-          if (node.data_type == DataType::Short) {
+          if (node.data_type == DataType::Short && node.pointer_level == 0) {
             emit_line("movw %ax, -" + std::to_string(elem_offset) + "(%rbp)");
           } else {
             emit_line("movq %rax, -" + std::to_string(elem_offset) + "(%rbp)");
@@ -283,7 +313,7 @@ void X86_64CodeGenerator::visit(const VarDeclNode &node) {
     int offset = get_var_offset(node.name);
     if (node.init) {
       node.init->accept(*this);
-      if (node.data_type == DataType::Short) {
+      if (node.data_type == DataType::Short && node.pointer_level == 0 && !node.is_func_ptr) {
         emit_line("movw %ax, -" + std::to_string(offset) + "(%rbp)");
       } else {
         emit_line("movq %rax, -" + std::to_string(offset) + "(%rbp)");
@@ -355,8 +385,27 @@ void X86_64CodeGenerator::visit(const AssignNode &node) {
     return;
   }
 
+  if (node.left->getType() == ASTNodeType::UnaryOp &&
+      static_cast<const UnaryOpNode *>(node.left.get())->op == TOK_STAR) {
+    auto *unary = static_cast<const UnaryOpNode *>(node.left.get());
+    if (unary->expr) {
+      unary->expr->accept(*this);
+    } else {
+      emit_line("movq $0, %rax");
+    }
+    emit_line("pushq %rax");
+
+    if (node.right) {
+      node.right->accept(*this);
+    }
+
+    emit_line("popq %r10");
+    emit_line("movq %rax, (%r10)");
+    return;
+  }
+
   if (node.left->getType() != ASTNodeType::Identifier) {
-    throw std::runtime_error("Left-hand side of assignment must be variable or array element");
+    throw std::runtime_error("Left-hand side of assignment must be variable, array element, or dereference");
   }
   auto *ident = static_cast<const IdentifierNode *>(node.left.get());
   int offset = get_var_offset(ident->name);
@@ -364,7 +413,7 @@ void X86_64CodeGenerator::visit(const AssignNode &node) {
   if (node.right) {
     node.right->accept(*this);
   }
-  if (get_var_type(ident->name) == DataType::Short) {
+  if (get_var_type(ident->name) == DataType::Short && !is_func_ptr_[ident->name]) {
     emit_line("movw %ax, -" + std::to_string(offset) + "(%rbp)");
   } else {
     emit_line("movq %rax, -" + std::to_string(offset) + "(%rbp)");
@@ -376,13 +425,19 @@ void X86_64CodeGenerator::visit(const IntLitNode &node) {
 }
 
 void X86_64CodeGenerator::visit(const IdentifierNode &node) {
-  int offset = get_var_offset(node.name);
+  auto it_offset = var_offsets_.find(node.name);
+  if (it_offset == var_offsets_.end()) {
+    // Function address decay / symbol reference
+    emit_line("leaq " + node.name + "(%rip), %rax");
+    return;
+  }
+  int offset = it_offset->second;
   auto it = is_array_.find(node.name);
   if (it != is_array_.end() && it->second) {
     emit_line("leaq -" + std::to_string(offset) + "(%rbp), %rax");
     return;
   }
-  if (get_var_type(node.name) == DataType::Short) {
+  if (get_var_type(node.name) == DataType::Short && !is_func_ptr_[node.name]) {
     emit_line("movswq -" + std::to_string(offset) + "(%rbp), %rax");
   } else {
     emit_line("movq -" + std::to_string(offset) + "(%rbp), %rax");
@@ -390,6 +445,58 @@ void X86_64CodeGenerator::visit(const IdentifierNode &node) {
 }
 
 void X86_64CodeGenerator::visit(const UnaryOpNode &node) {
+  if (node.op == TOK_AMP) {
+    if (!node.expr) {
+      unsupported(node, "empty address-of");
+    }
+    if (node.expr->getType() == ASTNodeType::Identifier) {
+      auto *ident = static_cast<const IdentifierNode *>(node.expr.get());
+      auto it = var_offsets_.find(ident->name);
+      if (it != var_offsets_.end()) {
+        emit_line("leaq -" + std::to_string(it->second) + "(%rbp), %rax");
+      } else {
+        emit_line("leaq " + ident->name + "(%rip), %rax");
+      }
+      return;
+    }
+    if (node.expr->getType() == ASTNodeType::ArrayAccess) {
+      auto *acc = static_cast<const ArrayAccessNode *>(node.expr.get());
+      if (!acc->array || acc->array->getType() != ASTNodeType::Identifier) {
+        unsupported(node, "complex array address");
+      }
+      auto *ident = static_cast<const IdentifierNode *>(acc->array.get());
+      int base_offset = get_var_offset(ident->name);
+      if (acc->index) {
+        acc->index->accept(*this);
+      } else {
+        emit_line("movq $0, %rax");
+      }
+      emit_line("leaq -" + std::to_string(base_offset) + "(%rbp), %r11");
+      if (get_var_type(ident->name) == DataType::Short) {
+        emit_line("leaq (%r11, %rax, 2), %rax");
+      } else {
+        emit_line("leaq (%r11, %rax, 8), %rax");
+      }
+      return;
+    }
+    if (node.expr->getType() == ASTNodeType::UnaryOp &&
+        static_cast<const UnaryOpNode *>(node.expr.get())->op == TOK_STAR) {
+      static_cast<const UnaryOpNode *>(node.expr.get())->expr->accept(*this);
+      return;
+    }
+    unsupported(node, "unsupported address-of expression");
+  }
+
+  if (node.op == TOK_STAR) {
+    if (node.expr) {
+      node.expr->accept(*this);
+    } else {
+      emit_line("movq $0, %rax");
+    }
+    emit_line("movq (%rax), %rax");
+    return;
+  }
+
   if (node.expr) {
     node.expr->accept(*this);
   }

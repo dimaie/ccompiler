@@ -750,6 +750,105 @@ static void test_arrays_codegen() {
   }
 }
 
+static void test_pointers_codegen() {
+  std::cout << "Testing Pointers Code Generation across all backends...\n";
+
+  const char *src =
+      "int x = 10;\n"
+      "int *p = &x;\n"
+      "*p = 42;\n"
+      "return *p;\n";
+
+  // 1. x86_64
+  {
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse(src);
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("leaq") != std::string::npos);
+    assert(asm_code.find("movq (%rax), %rax") != std::string::npos);
+    assert(asm_code.find("movq %rax, (%r10)") != std::string::npos);
+  }
+
+  // 2. ARM64
+  {
+    auto gen = CodeGeneratorFactory::create("arm64");
+    auto prog = parse(src);
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("add x0, x29,") != std::string::npos);
+    assert(asm_code.find("ldr x0, [x0]") != std::string::npos);
+    assert(asm_code.find("str x0, [x1]") != std::string::npos);
+  }
+
+  // 3. AVR
+  {
+    auto gen = CodeGeneratorFactory::create("avr");
+    auto prog = parse(src);
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("ld r24, Z") != std::string::npos);
+    assert(asm_code.find("st Z, r24") != std::string::npos);
+  }
+
+  // 4. C Transpiler
+  {
+    auto gen = CodeGeneratorFactory::create("c");
+    auto prog = parse(src);
+    std::string c_code = gen->generate_to_string(*prog);
+    assert(c_code.find("int *p = &x;") != std::string::npos);
+    assert(c_code.find("(*p) = 42;") != std::string::npos);
+    assert(c_code.find("return (*p);") != std::string::npos);
+  }
+}
+
+static void test_func_ptrs_codegen() {
+  std::cout << "Testing Function Pointers Code Generation across all backends...\n";
+
+  const char *src =
+      "int add(int a, int b) {\n"
+      "  return a + b;\n"
+      "}\n"
+      "int (*fp)(int, int) = add;\n"
+      "int r1 = fp(2, 3);\n"
+      "int r2 = (*fp)(10, 20);\n"
+      "return r1 + r2;\n";
+
+  // 1. x86_64
+  {
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse(src);
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("leaq add(%rip), %rax") != std::string::npos);
+    assert(asm_code.find("call *%r11") != std::string::npos);
+  }
+
+  // 2. ARM64
+  {
+    auto gen = CodeGeneratorFactory::create("arm64");
+    auto prog = parse(src);
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("adrp x0, add") != std::string::npos);
+    assert(asm_code.find("blr x16") != std::string::npos);
+  }
+
+  // 3. AVR
+  {
+    auto gen = CodeGeneratorFactory::create("avr");
+    auto prog = parse(src);
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("pm_lo8(add)") != std::string::npos);
+    assert(asm_code.find("icall") != std::string::npos);
+  }
+
+  // 4. C Transpiler
+  {
+    auto gen = CodeGeneratorFactory::create("c");
+    auto prog = parse(src);
+    std::string c_code = gen->generate_to_string(*prog);
+    assert(c_code.find("int (*fp)(int, int) = add;") != std::string::npos);
+    assert(c_code.find("fp(2, 3);") != std::string::npos);
+    assert(c_code.find("(*fp)") != std::string::npos);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Code Generator Test Suite\n";
@@ -763,9 +862,11 @@ int main() {
   test_unsupported_features();
   test_functions_codegen();
   test_arrays_codegen();
+  test_pointers_codegen();
+  test_func_ptrs_codegen();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL CODEGEN TESTS PASSED! (8/8)\n";
+  std::cout << "  ALL CODEGEN TESTS PASSED! (10/10)\n";
   std::cout << "========================================\n";
   return 0;
 }

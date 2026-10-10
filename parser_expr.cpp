@@ -62,12 +62,30 @@ std::unique_ptr<ASTNode> Parser::parse_primary() {
     parse_error(t, "Expected expression");
   }
 
-  // Postfix array indexing: arr[index]
-  while (match(TOK_LBRACKET)) {
-    auto index = parse_expr();
-    expect(TOK_RBRACKET, "Expected ']' after array index");
-    expr = std::make_unique<ArrayAccessNode>(expr->line, std::move(expr),
-                                             std::move(index));
+  // Postfix array indexing: arr[index] or indirect function calls (expr)(args)
+  while (true) {
+    if (match(TOK_LBRACKET)) {
+      auto index = parse_expr();
+      expect(TOK_RBRACKET, "Expected ']' after array index");
+      expr = std::make_unique<ArrayAccessNode>(expr->line, std::move(expr),
+                                               std::move(index));
+    } else if (peek().type == TOK_LPAREN) {
+      expect(TOK_LPAREN, "Expected '(' after function pointer expression");
+      std::vector<std::unique_ptr<ASTNode>> args;
+      if (peek().type != TOK_RPAREN) {
+        while (true) {
+          args.push_back(parse_expr());
+          if (match(TOK_COMMA)) {
+            continue;
+          }
+          break;
+        }
+      }
+      expect(TOK_RPAREN, "Expected ')' after arguments");
+      expr = std::make_unique<CallNode>(expr->line, std::move(expr), std::move(args));
+    } else {
+      break;
+    }
   }
 
   return expr;
@@ -76,7 +94,7 @@ std::unique_ptr<ASTNode> Parser::parse_primary() {
 std::unique_ptr<ASTNode> Parser::parse_unary() {
   Token t = peek();
   if (t.type == TOK_PLUS || t.type == TOK_MINUS || t.type == TOK_LOGIC_NOT ||
-      t.type == TOK_TILDE) {
+      t.type == TOK_TILDE || t.type == TOK_STAR || t.type == TOK_AMP) {
     lexer_->next();
     auto expr = parse_unary();
     return std::make_unique<UnaryOpNode>(t.line, t.type, std::move(expr));
@@ -108,9 +126,12 @@ std::unique_ptr<ASTNode> Parser::parse_expr_precedence(int min_prec) {
 std::unique_ptr<ASTNode> Parser::parse_assignment() {
   auto left = parse_expr_precedence(1);
   if (match(TOK_ASSIGN)) {
-    if (left->getType() != ASTNodeType::Identifier &&
-        left->getType() != ASTNodeType::ArrayAccess) {
-      parse_error(peek(), "Left side of assignment must be an identifier or array element");
+    bool valid_lvalue = (left->getType() == ASTNodeType::Identifier) ||
+                        (left->getType() == ASTNodeType::ArrayAccess) ||
+                        (left->getType() == ASTNodeType::UnaryOp &&
+                         static_cast<const UnaryOpNode *>(left.get())->op == TOK_STAR);
+    if (!valid_lvalue) {
+      parse_error(peek(), "Left side of assignment must be an identifier, array element, or dereference");
     }
     auto right = parse_assignment();
     return std::make_unique<AssignNode>(left->line, std::move(left),

@@ -26,16 +26,21 @@ statement
     | empty_stmt ;
 
 func_def
-    = type_specifier , IDENTIFIER , "(" , [ "void" | param_list ] , ")" , compound_stmt ;
+    = type_specifier , { "*" } , IDENTIFIER , "(" , [ "void" | param_list ] , ")" , compound_stmt ;
 
 param_list
     = param , { "," , param } ;
 
 param
-    = type_specifier , IDENTIFIER ;
+    = type_specifier , { "*" } , IDENTIFIER
+    | type_specifier , { "*" } , "(" , "*" , IDENTIFIER , ")" , "(" , [ "void" | type_list ] , ")" ;
+
+type_list
+    = type_specifier , { "*" } , { "," , type_specifier , { "*" } } ;
 
 var_decl
-    = type_specifier , IDENTIFIER , [ "[" , [ INT_LIT ] , "]" ] , [ "=" , ( expr | init_list ) ] , ";" ;
+    = type_specifier , { "*" } , IDENTIFIER , [ "[" , [ INT_LIT ] , "]" ] , [ "=" , ( expr | init_list ) ] , ";"
+    | type_specifier , { "*" } , "(" , "*" , IDENTIFIER , ")" , "(" , [ "void" | type_list ] , ")" , [ "=" , expr ] , ";" ;
 
 init_list
     = "{" , [ expr , { "," , expr } , [ "," ] ] , "}" ;
@@ -95,8 +100,12 @@ expr
     = assignment ;
 
 assignment
-    = ( IDENTIFIER | array_access ) , "=" , assignment
+    = ( IDENTIFIER | array_access | deref_expr ) , "=" , assignment
     | logical_or ;
+
+deref_expr
+    = "*" , unary
+    | "(" , "*" , unary , ")" ;
 
 array_access
     = IDENTIFIER , "[" , expr , "]" , { "[" , expr , "]" } ;
@@ -120,13 +129,13 @@ multiplicative
     = unary , { ( "*" | "/" | "%" ) , unary } ;
 
 unary
-    = ( "+" | "-" | "!" | "~" ) , unary
+    = ( "+" | "-" | "!" | "~" | "&" | "*" ) , unary
     | primary ;
 
 primary
     = IDENTIFIER , [ "(" , [ arg_list ] , ")" | { "[" , expr , "]" } ]
     | INT_LIT
-    | "(" , expr , ")" ;
+    | "(" , expr , ")" , [ "(" , [ arg_list ] , ")" ] ;
 
 arg_list
     = expr , { "," , expr } ;

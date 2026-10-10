@@ -48,6 +48,7 @@ private:
   std::unordered_map<std::string, int> var_offsets_;
   std::unordered_map<std::string, bool> is_array_;
   std::unordered_map<std::string, int> array_sizes_;
+  std::unordered_map<std::string, bool> is_func_ptr_;
   int current_offset_{0};
   int label_counter_{0};
   std::string ret_label_{".Lmain_avr_ret"};

@@ -147,6 +147,7 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
     var_offsets_.clear();
     is_array_.clear();
     array_sizes_.clear();
+    is_func_ptr_.clear();
     current_offset_ = 0;
 
     int extra = 0;
@@ -191,6 +192,7 @@ void AVRCodeGenerator::visit(const FuncDefNode &node) {
   var_offsets_.clear();
   is_array_.clear();
   array_sizes_.clear();
+  is_func_ptr_.clear();
   current_offset_ = 0;
   break_stack_.clear();
   continue_stack_.clear();
@@ -226,6 +228,9 @@ void AVRCodeGenerator::visit(const FuncDefNode &node) {
       if (p.type == DataType::Long || p.type == DataType::LongLong) {
         unsupported(node, "type modifier 'long' on AVR parameter");
       }
+      if (p.is_func_ptr) {
+        is_func_ptr_[p.name] = true;
+      }
       int offset = get_var_offset(p.name);
       emit_line("std Y+" + std::to_string(offset - 1) + ", " + ARG_REGS[i].first);
       emit_line("std Y+" + std::to_string(offset) + ", " +
@@ -259,6 +264,21 @@ void AVRCodeGenerator::visit(const CallNode &node) {
     unsupported(node, "more than 4 function call arguments on AVR");
   }
 
+  bool is_indirect = false;
+  if (node.callee_expr) {
+    is_indirect = true;
+    node.callee_expr->accept(*this);
+    emit_line("push r24");
+    emit_line("push r25");
+  } else if (!node.callee.empty() && var_offsets_.find(node.callee) != var_offsets_.end()) {
+    is_indirect = true;
+    int offset = get_var_offset(node.callee);
+    emit_line("ldd r24, Y+" + std::to_string(offset - 1));
+    emit_line("ldd r25, Y+" + std::to_string(offset));
+    emit_line("push r24");
+    emit_line("push r25");
+  }
+
   for (const auto &arg : node.args) {
     if (arg) {
       arg->accept(*this);
@@ -278,7 +298,13 @@ void AVRCodeGenerator::visit(const CallNode &node) {
     emit_line(std::string("pop ") + ARG_REGS[i].first);
   }
 
-  emit_line("call " + node.callee);
+  if (is_indirect) {
+    emit_line("pop r31");
+    emit_line("pop r30");
+    emit_line("icall");
+  } else {
+    emit_line("call " + node.callee);
+  }
 }
 
 void AVRCodeGenerator::visit(const ProgramNode &node) {
@@ -300,6 +326,9 @@ void AVRCodeGenerator::visit(const CompoundNode &node) {
 void AVRCodeGenerator::visit(const VarDeclNode &node) {
   if (node.data_type == DataType::Long || node.data_type == DataType::LongLong) {
     unsupported(node, "type modifier 'long'");
+  }
+  if (node.is_func_ptr) {
+    is_func_ptr_[node.name] = true;
   }
   if (node.is_array) {
     is_array_[node.name] = true;
@@ -403,8 +432,31 @@ void AVRCodeGenerator::visit(const AssignNode &node) {
     return;
   }
 
+  if (node.left->getType() == ASTNodeType::UnaryOp &&
+      static_cast<const UnaryOpNode *>(node.left.get())->op == TOK_STAR) {
+    auto *unary = static_cast<const UnaryOpNode *>(node.left.get());
+    if (unary->expr) {
+      unary->expr->accept(*this);
+    } else {
+      emit_line("ldi r24, 0");
+      emit_line("ldi r25, 0");
+    }
+    emit_line("push r24");
+    emit_line("push r25");
+
+    if (node.right) {
+      node.right->accept(*this);
+    }
+
+    emit_line("pop r31");
+    emit_line("pop r30");
+    emit_line("st Z, r24");
+    emit_line("std Z+1, r25");
+    return;
+  }
+
   if (node.left->getType() != ASTNodeType::Identifier) {
-    throw std::runtime_error("Left-hand side of assignment must be variable or array element");
+    throw std::runtime_error("Left-hand side of assignment must be variable, array element, or dereference");
   }
   auto *ident = static_cast<const IdentifierNode *>(node.left.get());
   int offset = get_var_offset(ident->name);
@@ -425,7 +477,14 @@ void AVRCodeGenerator::visit(const IntLitNode &node) {
 }
 
 void AVRCodeGenerator::visit(const IdentifierNode &node) {
-  int offset = get_var_offset(node.name);
+  auto it_offset = var_offsets_.find(node.name);
+  if (it_offset == var_offsets_.end()) {
+    // Function address decay
+    emit_line("ldi r24, pm_lo8(" + node.name + ")");
+    emit_line("ldi r25, pm_hi8(" + node.name + ")");
+    return;
+  }
+  int offset = it_offset->second;
   auto it = is_array_.find(node.name);
   if (it != is_array_.end() && it->second) {
     emit_line("movw r24, r28");
@@ -438,6 +497,68 @@ void AVRCodeGenerator::visit(const IdentifierNode &node) {
 }
 
 void AVRCodeGenerator::visit(const UnaryOpNode &node) {
+  if (node.op == TOK_AMP) {
+    if (!node.expr) {
+      unsupported(node, "empty address-of");
+    }
+    if (node.expr->getType() == ASTNodeType::Identifier) {
+      auto *ident = static_cast<const IdentifierNode *>(node.expr.get());
+      auto it = var_offsets_.find(ident->name);
+      if (it != var_offsets_.end()) {
+        int offset = it->second;
+        emit_line("movw r24, r28");
+        emit_line("subi r24, lo8(-" + std::to_string(offset) + ")");
+        emit_line("sbci r25, hi8(-" + std::to_string(offset) + ")");
+      } else {
+        emit_line("ldi r24, pm_lo8(" + ident->name + ")");
+        emit_line("ldi r25, pm_hi8(" + ident->name + ")");
+      }
+      return;
+    }
+    if (node.expr->getType() == ASTNodeType::ArrayAccess) {
+      auto *acc = static_cast<const ArrayAccessNode *>(node.expr.get());
+      if (!acc->array || acc->array->getType() != ASTNodeType::Identifier) {
+        unsupported(node, "complex array address");
+      }
+      auto *ident = static_cast<const IdentifierNode *>(acc->array.get());
+      int base_offset = get_var_offset(ident->name);
+      if (acc->index) {
+        acc->index->accept(*this);
+      } else {
+        emit_line("ldi r24, 0");
+        emit_line("ldi r25, 0");
+      }
+      emit_line("lsl r24");
+      emit_line("rol r25");
+      emit_line("subi r24, lo8(-" + std::to_string(base_offset) + ")");
+      emit_line("sbci r25, hi8(-" + std::to_string(base_offset) + ")");
+      emit_line("movw r30, r28");
+      emit_line("add r30, r24");
+      emit_line("adc r31, r25");
+      emit_line("movw r24, r30");
+      return;
+    }
+    if (node.expr->getType() == ASTNodeType::UnaryOp &&
+        static_cast<const UnaryOpNode *>(node.expr.get())->op == TOK_STAR) {
+      static_cast<const UnaryOpNode *>(node.expr.get())->expr->accept(*this);
+      return;
+    }
+    unsupported(node, "unsupported address-of expression");
+  }
+
+  if (node.op == TOK_STAR) {
+    if (node.expr) {
+      node.expr->accept(*this);
+    } else {
+      emit_line("ldi r24, 0");
+      emit_line("ldi r25, 0");
+    }
+    emit_line("movw r30, r24");
+    emit_line("ld r24, Z");
+    emit_line("ldd r25, Z+1");
+    return;
+  }
+
   if (node.expr) {
     node.expr->accept(*this);
   }

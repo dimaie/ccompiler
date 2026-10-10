@@ -38,20 +38,74 @@ DataType Parser::parse_type_specifier() {
   parse_error(t, "Expected type specifier ('int', 'short', 'long', or 'void')");
 }
 
+std::unique_ptr<VarDeclNode> Parser::parse_func_ptr_decl(DataType return_type) {
+  expect(TOK_LPAREN, "Expected '(' in function pointer declaration");
+  int ptr_level = 0;
+  while (match(TOK_STAR)) {
+    ++ptr_level;
+  }
+  if (ptr_level == 0) {
+    ptr_level = 1;
+  }
+  Token id_tok = expect(TOK_IDENTIFIER, "Expected function pointer name");
+  expect(TOK_RPAREN, "Expected ')' after function pointer name");
+  expect(TOK_LPAREN, "Expected '(' for function pointer parameter list");
+  std::vector<DataType> param_types;
+  if (peek().type != TOK_RPAREN) {
+    if (peek().type == TOK_KW_VOID && peek(2).type == TOK_RPAREN) {
+      lexer_->next(); // consume 'void'
+    } else {
+      while (true) {
+        DataType pt = parse_type_specifier();
+        while (match(TOK_STAR)) {
+          // ignore star on prototype param
+        }
+        if (peek().type == TOK_IDENTIFIER) {
+          lexer_->next(); // optional param name in prototype
+        }
+        param_types.push_back(pt);
+        if (match(TOK_COMMA)) {
+          continue;
+        }
+        break;
+      }
+    }
+  }
+  expect(TOK_RPAREN, "Expected ')' after parameters");
+  std::unique_ptr<ASTNode> init = nullptr;
+  if (match(TOK_ASSIGN)) {
+    init = parse_expr();
+  }
+  expect(TOK_SEMICOLON, "Expected ';' after function pointer declaration");
+  auto node = std::make_unique<VarDeclNode>(id_tok.line, return_type, id_tok.text, std::move(init));
+  node->is_func_ptr = true;
+  node->pointer_level = ptr_level;
+  node->func_ptr_ret_type = return_type;
+  node->func_ptr_params = std::move(param_types);
+  return node;
+}
+
 std::unique_ptr<ASTNode> Parser::parse_declaration() {
   DataType type = parse_type_specifier();
+  if (peek().type == TOK_LPAREN && peek(2).type == TOK_STAR) {
+    return parse_func_ptr_decl(type);
+  }
+  int pointer_level = 0;
+  while (match(TOK_STAR)) {
+    ++pointer_level;
+  }
   Token id_tok = expect(TOK_IDENTIFIER, "Expected identifier after type specifier");
   if (peek().type == TOK_LPAREN) {
-    return parse_function_def(type, id_tok);
+    return parse_function_def(type, id_tok, pointer_level);
   }
-  if (type == DataType::Void) {
+  if (type == DataType::Void && pointer_level == 0) {
     parse_error(id_tok, "Variable cannot have type 'void'");
   }
-  return parse_var_decl_after_id(type, id_tok);
+  return parse_var_decl_after_id(type, id_tok, pointer_level);
 }
 
 std::unique_ptr<FuncDefNode>
-Parser::parse_function_def(DataType return_type, const Token &id_tok) {
+Parser::parse_function_def(DataType return_type, const Token &id_tok, int return_pointer_level) {
   expect(TOK_LPAREN, "Expected '(' after function name");
   std::vector<Param> params;
   if (peek().type != TOK_RPAREN) {
@@ -60,12 +114,59 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok) {
     } else {
       while (true) {
         DataType param_type = parse_type_specifier();
-        Token param_name =
-            expect(TOK_IDENTIFIER, "Expected parameter name");
-        if (param_type == DataType::Void) {
-          parse_error(param_name, "Parameter cannot have type 'void'");
+        if (peek().type == TOK_LPAREN && peek(2).type == TOK_STAR) {
+          expect(TOK_LPAREN, "Expected '(' in function pointer parameter");
+          int ptr_level = 0;
+          while (match(TOK_STAR)) {
+            ++ptr_level;
+          }
+          if (ptr_level == 0) ptr_level = 1;
+          Token param_name = expect(TOK_IDENTIFIER, "Expected parameter name");
+          expect(TOK_RPAREN, "Expected ')' after parameter name");
+          expect(TOK_LPAREN, "Expected '(' for parameter list");
+          std::vector<DataType> p_param_types;
+          if (peek().type != TOK_RPAREN) {
+            if (peek().type == TOK_KW_VOID && peek(2).type == TOK_RPAREN) {
+              lexer_->next();
+            } else {
+              while (true) {
+                DataType pt = parse_type_specifier();
+                while (match(TOK_STAR)) {}
+                if (peek().type == TOK_IDENTIFIER) lexer_->next();
+                p_param_types.push_back(pt);
+                if (match(TOK_COMMA)) continue;
+                break;
+              }
+            }
+          }
+          expect(TOK_RPAREN, "Expected ')' after parameter list");
+          Param p;
+          p.type = param_type;
+          p.pointer_level = ptr_level;
+          p.name = param_name.text;
+          p.line = param_name.line;
+          p.is_func_ptr = true;
+          p.func_ptr_ret_type = param_type;
+          p.func_ptr_params = std::move(p_param_types);
+          params.push_back(std::move(p));
+        } else {
+          int param_ptr_level = 0;
+          while (match(TOK_STAR)) {
+            ++param_ptr_level;
+          }
+          Token param_name =
+              expect(TOK_IDENTIFIER, "Expected parameter name");
+          if (param_type == DataType::Void && param_ptr_level == 0) {
+            parse_error(param_name, "Parameter cannot have type 'void'");
+          }
+          Param p;
+          p.type = param_type;
+          p.pointer_level = param_ptr_level;
+          p.name = param_name.text;
+          p.line = param_name.line;
+          params.push_back(std::move(p));
         }
-        params.push_back(Param{param_type, param_name.text, param_name.line});
+
         if (match(TOK_COMMA)) {
           continue;
         }
@@ -76,11 +177,12 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok) {
   expect(TOK_RPAREN, "Expected ')' after parameters");
   auto body = parse_compound_statement();
   return std::make_unique<FuncDefNode>(id_tok.line, return_type, id_tok.text,
-                                       std::move(params), std::move(body));
+                                       std::move(params), std::move(body),
+                                       return_pointer_level);
 }
 
 std::unique_ptr<VarDeclNode>
-Parser::parse_var_decl_after_id(DataType type, const Token &id_tok) {
+Parser::parse_var_decl_after_id(DataType type, const Token &id_tok, int pointer_level) {
   bool is_array = false;
   int array_size = 0;
 
@@ -138,18 +240,27 @@ Parser::parse_var_decl_after_id(DataType type, const Token &id_tok) {
 
   expect(TOK_SEMICOLON, "Expected ';' after variable declaration");
   if (is_array) {
-    return std::make_unique<VarDeclNode>(id_tok.line, type, id_tok.text,
-                                         array_size, std::move(init));
+    auto node = std::make_unique<VarDeclNode>(id_tok.line, type, id_tok.text,
+                                              array_size, std::move(init));
+    node->pointer_level = pointer_level;
+    return node;
   }
-  return std::make_unique<VarDeclNode>(id_tok.line, type, id_tok.text,
+  return std::make_unique<VarDeclNode>(id_tok.line, type, pointer_level, id_tok.text,
                                        std::move(init));
 }
 
 std::unique_ptr<VarDeclNode> Parser::parse_var_decl() {
   DataType type = parse_type_specifier();
+  if (peek().type == TOK_LPAREN && peek(2).type == TOK_STAR) {
+    return parse_func_ptr_decl(type);
+  }
+  int pointer_level = 0;
+  while (match(TOK_STAR)) {
+    ++pointer_level;
+  }
   Token id_tok = expect(TOK_IDENTIFIER, "Expected identifier after type specifier");
-  if (type == DataType::Void) {
+  if (type == DataType::Void && pointer_level == 0) {
     parse_error(id_tok, "Variable cannot have type 'void'");
   }
-  return parse_var_decl_after_id(type, id_tok);
+  return parse_var_decl_after_id(type, id_tok, pointer_level);
 }

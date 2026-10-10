@@ -34,16 +34,21 @@ statement
       | empty_stmt ;
 
 func_def
-    ::= type_specifier IDENTIFIER "(" ( "void" | param_list )? ")" compound_stmt ;
+    ::= type_specifier "*"\* IDENTIFIER "(" ( "void" | param_list )? ")" compound_stmt ;
 
 param_list
     ::= param ( "," param )* ;
 
 param
-    ::= type_specifier IDENTIFIER ;
+    ::= type_specifier "*"\* IDENTIFIER
+      | type_specifier "*"\* "(" "*" IDENTIFIER ")" "(" ( "void" | type_list )? ")" ;
+
+type_list
+    ::= type_specifier "*"\* ( "," type_specifier "*"\* )* ;
 
 var_decl
-    ::= type_specifier IDENTIFIER ( "[" ( INT_LIT )? "]" )? ( "=" ( expr | init_list ) )? ";" ;
+    ::= type_specifier "*"\* IDENTIFIER ( "[" ( INT_LIT )? "]" )? ( "=" ( expr | init_list ) )? ";"
+      | type_specifier "*"\* "(" "*" IDENTIFIER ")" "(" ( "void" | type_list )? ")" ( "=" expr )? ";" ;
 
 init_list
     ::= "{" ( expr ( "," expr )* ( "," )? )? "}" ;
@@ -104,8 +109,12 @@ expr
     ::= assignment ;
 
 assignment
-    ::= ( IDENTIFIER | array_access ) "=" assignment
+    ::= ( IDENTIFIER | array_access | deref_expr ) "=" assignment
       | logical_or ;
+
+deref_expr
+    ::= "*" unary
+      | "(" "*" unary ")" ;
 
 array_access
     ::= IDENTIFIER "[" expr "]" ( "[" expr "]" )* ;
@@ -129,13 +138,13 @@ multiplicative
     ::= unary ( ( "*" | "/" | "%" ) unary )* ;
 
 unary
-    ::= ( "+" | "-" | "!" | "~" ) unary
+    ::= ( "+" | "-" | "!" | "~" | "&" | "*" ) unary
       | primary ;
 
 primary
     ::= IDENTIFIER ( "(" ( expr ( "," expr )* )? ")" | ( "[" expr "]" )+ )?
       | INT_LIT
-      | "(" expr ")" ;
+      | "(" expr ")" ( "(" ( expr ( "," expr )* )? ")" )? ;
 ```
 
 ---
@@ -147,7 +156,7 @@ Operators supported by the parser, ordered from highest to lowest precedence:
 | Precedence | Operator | Description | Associativity | AST Node Type |
 | :---: | :---: | :--- | :---: | :--- |
 | **1 (Highest)** | `( )` | Parenthesized expression | N/A | Evaluated first |
-| **2** | `+`, `-`, `!`, `~` | Unary positive, negation, logical NOT, bitwise NOT | Right-to-left | `AST_UNARY_OP` |
+| **2** | `+`, `-`, `!`, `~`, `&`, `*` | Unary positive, negation, logical NOT, bitwise NOT, address-of, dereference | Right-to-left | `AST_UNARY_OP` |
 | **3** | `*`, `/`, `%` | Multiplication, division, modulo | Left-to-right | `AST_BINARY_OP` |
 | **4** | `+`, `-` | Addition, subtraction | Left-to-right | `AST_BINARY_OP` |
 | **5** | `<`, `<=`, `>`, `>=` | Relational comparisons | Left-to-right | `AST_BINARY_OP` |
