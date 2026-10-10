@@ -1,0 +1,102 @@
+(* =============================================================================
+   EBNF Grammar for C Compiler Frontend
+   Extracted from lexer.hpp, lexer.cpp, parser.hpp, and parser_*.cpp
+   ============================================================================= *)
+
+(* 1. Program & Statements *)
+
+program
+    = { statement } , EOF ;
+
+statement
+    = var_decl
+    | if_stmt
+    | for_stmt
+    | return_stmt
+    | compound_stmt
+    | expr_stmt ;
+
+var_decl
+    = "int" , IDENTIFIER , [ "=" , expr ] , ";" ;
+
+if_stmt
+    = "if" , "(" , expr , ")" , statement , [ "else" , statement ] ;
+
+for_stmt
+    = "for" , "(" , ( var_decl | [ expr ] , ";" ) , [ expr ] , ";" , [ expr ] , ")" , statement ;
+
+return_stmt
+    = "return" , expr , ";" ;
+
+compound_stmt
+    = "{" , { statement } , "}" ;
+
+expr_stmt
+    = expr , ";" ;
+
+
+(* 2. Expressions (Operator Precedence from lowest to highest) *)
+
+expr
+    = assignment ;
+
+assignment
+    = IDENTIFIER , "=" , assignment
+    | logical_or ;
+
+logical_or
+    = logical_and , { "||" , logical_and } ;
+
+logical_and
+    = equality , { "&&" , equality } ;
+
+equality
+    = relational , { ( "==" | "!=" ) , relational } ;
+
+relational
+    = additive , { ( "<" | "<=" | ">" | ">=" ) , additive } ;
+
+additive
+    = multiplicative , { ( "+" | "-" ) , multiplicative } ;
+
+multiplicative
+    = unary , { ( "*" | "/" | "%" ) , unary } ;
+
+unary
+    = ( "+" | "-" | "!" | "~" ) , unary
+    | primary ;
+
+primary
+    = IDENTIFIER
+    | INT_LIT
+    | "(" , expr , ")" ;
+
+
+(* 3. Lexical Terminals *)
+
+IDENTIFIER
+    = ( letter | "_" ) , { letter | digit | "_" } ;
+
+INT_LIT
+    = hex_lit
+    | dec_lit ;
+
+hex_lit
+    = "0" , ( "x" | "X" ) , hex_digit , { hex_digit } ;
+
+dec_lit
+    = digit , { digit } ;
+
+letter
+    = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m"
+    | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z"
+    | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M"
+    | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z" ;
+
+digit
+    = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
+
+hex_digit
+    = digit
+    | "a" | "b" | "c" | "d" | "e" | "f"
+    | "A" | "B" | "C" | "D" | "E" | "F" ;

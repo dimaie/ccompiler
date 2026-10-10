@@ -1,0 +1,28 @@
+# Build directory
+build/
+bin/
+out/
+
+# IDE / Tool caches
+.cache/
+compile_commands.json
+*.suo
+*.user
+*.userosv
+*.sln.docstates
+
+# Compiled objects and executables
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+
+# Logs and temporary files
+*.log
+*.tmp
+.DS_Store
+Thumbs.db

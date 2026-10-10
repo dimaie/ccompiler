@@ -1,0 +1,490 @@
+#include "ast.hpp"
+#include "lexer.hpp"
+#include "parser.hpp"
+#include <cassert>
+#include <iostream>
+#include <string>
+
+static std::unique_ptr<ProgramNode> parse_source(const char *source) {
+  Lexer lexer;
+  lexer.init(source);
+  Parser parser(&lexer);
+  return parser.parse_program();
+}
+
+static void test_program_node() {
+  std::cout << "Testing ProgramNode...\n";
+
+  // Empty program
+  {
+    auto prog = parse_source("");
+    assert(prog->getType() == ASTNodeType::Program);
+    assert(prog->statements.empty());
+  }
+
+  // Multiple statements
+  {
+    auto prog = parse_source("int a = 1;\nint b = 2;\nreturn a + b;\n");
+    assert(prog->getType() == ASTNodeType::Program);
+    assert(prog->statements.size() == 3);
+  }
+}
+
+static void test_var_decl_node() {
+  std::cout << "Testing VarDeclNode...\n";
+
+  // Declaration without initializer
+  {
+    auto prog = parse_source("int x;\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::VarDecl);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->name == "x");
+    assert(var->init == nullptr);
+  }
+
+  // Declaration with literal initializer
+  {
+    auto prog = parse_source("int count = 42;\n");
+    assert(prog->statements.size() == 1);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->name == "count");
+    assert(var->init != nullptr);
+    assert(var->init->getType() == ASTNodeType::IntLit);
+    auto *lit = static_cast<IntLitNode *>(var->init.get());
+    assert(lit->val == 42);
+  }
+
+  // Declaration with expression initializer
+  {
+    auto prog = parse_source("int result = a * 2 + 1;\n");
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->init != nullptr);
+    assert(var->init->getType() == ASTNodeType::BinaryOp);
+  }
+}
+
+static void test_if_node() {
+  std::cout << "Testing IfNode...\n";
+
+  // If without else
+  {
+    auto prog = parse_source("if (x > 0) return 1;\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::If);
+    auto *if_node = static_cast<IfNode *>(prog->statements[0].get());
+    assert(if_node->cond != nullptr);
+    assert(if_node->cond->getType() == ASTNodeType::BinaryOp);
+    assert(if_node->then_branch != nullptr);
+    assert(if_node->then_branch->getType() == ASTNodeType::Return);
+    assert(if_node->else_branch == nullptr);
+  }
+
+  // If with else
+  {
+    auto prog = parse_source("if (x == 0) return 1; else return 2;\n");
+    auto *if_node = static_cast<IfNode *>(prog->statements[0].get());
+    assert(if_node->else_branch != nullptr);
+    assert(if_node->else_branch->getType() == ASTNodeType::Return);
+  }
+
+  // If with compound statement blocks
+  {
+    auto prog =
+        parse_source("if (flag) { int a = 1; return a; } else { return 0; }\n");
+    auto *if_node = static_cast<IfNode *>(prog->statements[0].get());
+    assert(if_node->then_branch->getType() == ASTNodeType::Compound);
+    assert(if_node->else_branch->getType() == ASTNodeType::Compound);
+  }
+}
+
+static void test_for_node() {
+  std::cout << "Testing ForNode...\n";
+
+  // Full for loop with var_decl init
+  {
+    auto prog = parse_source("for (int i = 0; i < 10; i = i + 1) return i;\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::For);
+    auto *for_node = static_cast<ForNode *>(prog->statements[0].get());
+    assert(for_node->init != nullptr &&
+           for_node->init->getType() == ASTNodeType::VarDecl);
+    assert(for_node->cond != nullptr &&
+           for_node->cond->getType() == ASTNodeType::BinaryOp);
+    assert(for_node->step != nullptr &&
+           for_node->step->getType() == ASTNodeType::Assign);
+    assert(for_node->body != nullptr &&
+           for_node->body->getType() == ASTNodeType::Return);
+  }
+
+  // For loop with expression init
+  {
+    auto prog = parse_source("for (i = 0; i < 5; i = i + 1) { return i; }\n");
+    auto *for_node = static_cast<ForNode *>(prog->statements[0].get());
+    assert(for_node->init != nullptr &&
+           for_node->init->getType() == ASTNodeType::Assign);
+    assert(for_node->body->getType() == ASTNodeType::Compound);
+  }
+
+  // For loop with omitted init
+  {
+    auto prog = parse_source("for (; i < 10; i = i + 1) return 0;\n");
+    auto *for_node = static_cast<ForNode *>(prog->statements[0].get());
+    assert(for_node->init == nullptr);
+    assert(for_node->cond != nullptr);
+    assert(for_node->step != nullptr);
+  }
+
+  // For loop with omitted cond
+  {
+    auto prog = parse_source("for (int i = 0; ; i = i + 1) return 0;\n");
+    auto *for_node = static_cast<ForNode *>(prog->statements[0].get());
+    assert(for_node->init != nullptr);
+    assert(for_node->cond == nullptr);
+    assert(for_node->step != nullptr);
+  }
+
+  // For loop with omitted step
+  {
+    auto prog = parse_source("for (int i = 0; i < 10; ) return 0;\n");
+    auto *for_node = static_cast<ForNode *>(prog->statements[0].get());
+    assert(for_node->init != nullptr);
+    assert(for_node->cond != nullptr);
+    assert(for_node->step == nullptr);
+  }
+
+  // Infinite for loop (all omitted)
+  {
+    auto prog = parse_source("for (;;) { return 0; }\n");
+    auto *for_node = static_cast<ForNode *>(prog->statements[0].get());
+    assert(for_node->init == nullptr);
+    assert(for_node->cond == nullptr);
+    assert(for_node->step == nullptr);
+    assert(for_node->body->getType() == ASTNodeType::Compound);
+  }
+}
+
+static void test_return_node() {
+  std::cout << "Testing ReturnNode...\n";
+
+  // Return literal
+  {
+    auto prog = parse_source("return 42;\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::Return);
+    auto *ret = static_cast<ReturnNode *>(prog->statements[0].get());
+    assert(ret->expr != nullptr && ret->expr->getType() == ASTNodeType::IntLit);
+    auto *lit = static_cast<IntLitNode *>(ret->expr.get());
+    assert(lit->val == 42);
+  }
+
+  // Return binary expression
+  {
+    auto prog = parse_source("return a + b;\n");
+    auto *ret = static_cast<ReturnNode *>(prog->statements[0].get());
+    assert(ret->expr != nullptr &&
+           ret->expr->getType() == ASTNodeType::BinaryOp);
+  }
+}
+
+static void test_assign_node() {
+  std::cout << "Testing AssignNode...\n";
+
+  // Simple assignment
+  {
+    auto prog = parse_source("x = 10;\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::Assign);
+    auto *assign = static_cast<AssignNode *>(prog->statements[0].get());
+    assert(assign->left != nullptr &&
+           assign->left->getType() == ASTNodeType::Identifier);
+    auto *ident = static_cast<IdentifierNode *>(assign->left.get());
+    assert(ident->name == "x");
+    assert(assign->right != nullptr &&
+           assign->right->getType() == ASTNodeType::IntLit);
+  }
+
+  // Chained assignment (right-associative: a = (b = 5))
+  {
+    auto prog = parse_source("a = b = 5;\n");
+    auto *assign = static_cast<AssignNode *>(prog->statements[0].get());
+    assert(assign->left->getType() == ASTNodeType::Identifier);
+    assert(assign->right->getType() == ASTNodeType::Assign);
+    auto *inner = static_cast<AssignNode *>(assign->right.get());
+    assert(inner->left->getType() == ASTNodeType::Identifier);
+    assert(inner->right->getType() == ASTNodeType::IntLit);
+  }
+}
+
+static void test_binary_op_node() {
+  std::cout << "Testing BinaryOpNode...\n";
+
+  // Additive operators
+  {
+    auto prog = parse_source("a + b;\n");
+    auto *bin = static_cast<BinaryOpNode *>(prog->statements[0].get());
+    assert(bin->op == TOK_PLUS);
+  }
+  {
+    auto prog = parse_source("a - b;\n");
+    auto *bin = static_cast<BinaryOpNode *>(prog->statements[0].get());
+    assert(bin->op == TOK_MINUS);
+  }
+
+  // Multiplicative operators
+  {
+    auto prog = parse_source("a * b;\n");
+    auto *bin = static_cast<BinaryOpNode *>(prog->statements[0].get());
+    assert(bin->op == TOK_STAR);
+  }
+  {
+    auto prog = parse_source("a / b;\n");
+    auto *bin = static_cast<BinaryOpNode *>(prog->statements[0].get());
+    assert(bin->op == TOK_SLASH);
+  }
+  {
+    auto prog = parse_source("a % b;\n");
+    auto *bin = static_cast<BinaryOpNode *>(prog->statements[0].get());
+    assert(bin->op == TOK_PERCENT);
+  }
+
+  // Relational operators
+  {
+    auto prog = parse_source("a < b;\n");
+    auto *bin = static_cast<BinaryOpNode *>(prog->statements[0].get());
+    assert(bin->op == TOK_LESS);
+  }
+  {
+    auto prog = parse_source("a <= b;\n");
+    auto *bin = static_cast<BinaryOpNode *>(prog->statements[0].get());
+    assert(bin->op == TOK_LESS_EQ);
+  }
+  {
+    auto prog = parse_source("a > b;\n");
+    auto *bin = static_cast<BinaryOpNode *>(prog->statements[0].get());
+    assert(bin->op == TOK_GREATER);
+  }
+  {
+    auto prog = parse_source("a >= b;\n");
+    auto *bin = static_cast<BinaryOpNode *>(prog->statements[0].get());
+    assert(bin->op == TOK_GREATER_EQ);
+  }
+
+  // Equality operators
+  {
+    auto prog = parse_source("a == b;\n");
+    auto *bin = static_cast<BinaryOpNode *>(prog->statements[0].get());
+    assert(bin->op == TOK_EQUAL);
+  }
+  {
+    auto prog = parse_source("a != b;\n");
+    auto *bin = static_cast<BinaryOpNode *>(prog->statements[0].get());
+    assert(bin->op == TOK_NOT_EQUAL);
+  }
+
+  // Logical operators
+  {
+    auto prog = parse_source("a && b;\n");
+    auto *bin = static_cast<BinaryOpNode *>(prog->statements[0].get());
+    assert(bin->op == TOK_LOGIC_AND);
+  }
+  {
+    auto prog = parse_source("a || b;\n");
+    auto *bin = static_cast<BinaryOpNode *>(prog->statements[0].get());
+    assert(bin->op == TOK_LOGIC_OR);
+  }
+
+  // Precedence: 1 + 2 * 3 -> root is '+'
+  {
+    auto prog = parse_source("1 + 2 * 3;\n");
+    auto *bin = static_cast<BinaryOpNode *>(prog->statements[0].get());
+    assert(bin->op == TOK_PLUS);
+    assert(bin->left->getType() == ASTNodeType::IntLit);
+    assert(bin->right->getType() == ASTNodeType::BinaryOp);
+    auto *right = static_cast<BinaryOpNode *>(bin->right.get());
+    assert(right->op == TOK_STAR);
+  }
+
+  // Parenthesized grouping: (1 + 2) * 3 -> root is '*'
+  {
+    auto prog = parse_source("(1 + 2) * 3;\n");
+    auto *bin = static_cast<BinaryOpNode *>(prog->statements[0].get());
+    assert(bin->op == TOK_STAR);
+    assert(bin->left->getType() == ASTNodeType::BinaryOp);
+    assert(bin->right->getType() == ASTNodeType::IntLit);
+  }
+
+  // Left associativity: 1 - 2 - 3 -> (1 - 2) - 3
+  {
+    auto prog = parse_source("1 - 2 - 3;\n");
+    auto *bin = static_cast<BinaryOpNode *>(prog->statements[0].get());
+    assert(bin->op == TOK_MINUS);
+    assert(bin->left->getType() == ASTNodeType::BinaryOp);
+    assert(bin->right->getType() == ASTNodeType::IntLit);
+  }
+}
+
+static void test_unary_op_node() {
+  std::cout << "Testing UnaryOpNode...\n";
+
+  // Positive: +x
+  {
+    auto prog = parse_source("+x;\n");
+    auto *un = static_cast<UnaryOpNode *>(prog->statements[0].get());
+    assert(un->op == TOK_PLUS);
+    assert(un->expr->getType() == ASTNodeType::Identifier);
+  }
+
+  // Negation: -x
+  {
+    auto prog = parse_source("-x;\n");
+    auto *un = static_cast<UnaryOpNode *>(prog->statements[0].get());
+    assert(un->op == TOK_MINUS);
+  }
+
+  // Logical NOT: !x
+  {
+    auto prog = parse_source("!x;\n");
+    auto *un = static_cast<UnaryOpNode *>(prog->statements[0].get());
+    assert(un->op == TOK_LOGIC_NOT);
+  }
+
+  // Bitwise NOT: ~x
+  {
+    auto prog = parse_source("~x;\n");
+    auto *un = static_cast<UnaryOpNode *>(prog->statements[0].get());
+    assert(un->op == TOK_TILDE);
+  }
+
+  // Chained unaries: !-~x
+  {
+    auto prog = parse_source("!-~x;\n");
+    auto *un1 = static_cast<UnaryOpNode *>(prog->statements[0].get());
+    assert(un1->op == TOK_LOGIC_NOT);
+    assert(un1->expr->getType() == ASTNodeType::UnaryOp);
+    auto *un2 = static_cast<UnaryOpNode *>(un1->expr.get());
+    assert(un2->op == TOK_MINUS);
+    assert(un2->expr->getType() == ASTNodeType::UnaryOp);
+    auto *un3 = static_cast<UnaryOpNode *>(un2->expr.get());
+    assert(un3->op == TOK_TILDE);
+    assert(un3->expr->getType() == ASTNodeType::Identifier);
+  }
+}
+
+static void test_int_lit_node() {
+  std::cout << "Testing IntLitNode...\n";
+
+  // Decimal
+  {
+    auto prog = parse_source("12345;\n");
+    auto *lit = static_cast<IntLitNode *>(prog->statements[0].get());
+    assert(lit->val == 12345);
+  }
+
+  // Hexadecimal
+  {
+    auto prog = parse_source("0x2A;\n"); // 42 in decimal
+    auto *lit = static_cast<IntLitNode *>(prog->statements[0].get());
+    assert(lit->val == 42);
+  }
+
+  // Zero
+  {
+    auto prog = parse_source("0;\n");
+    auto *lit = static_cast<IntLitNode *>(prog->statements[0].get());
+    assert(lit->val == 0);
+  }
+}
+
+static void test_identifier_node() {
+  std::cout << "Testing IdentifierNode...\n";
+
+  {
+    auto prog = parse_source("variable_name_123;\n");
+    auto *ident = static_cast<IdentifierNode *>(prog->statements[0].get());
+    assert(ident->name == "variable_name_123");
+  }
+}
+
+static void test_compound_node() {
+  std::cout << "Testing CompoundNode...\n";
+
+  // Empty compound block
+  {
+    auto prog = parse_source("{}\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::Compound);
+    auto *block = static_cast<CompoundNode *>(prog->statements[0].get());
+    assert(block->statements.empty());
+  }
+
+  // Nested compound block with multiple statements
+  {
+    auto prog =
+        parse_source("{\n  int x = 1;\n  {\n    x = 2;\n  }\n  return x;\n}\n");
+    auto *block = static_cast<CompoundNode *>(prog->statements[0].get());
+    assert(block->statements.size() == 3);
+    assert(block->statements[1]->getType() == ASTNodeType::Compound);
+  }
+}
+
+static void test_syntax_errors() {
+  std::cout << "Testing Syntax Error Exceptions...\n";
+
+  // Missing semicolon
+  {
+    bool threw = false;
+    try {
+      parse_source("int x = 5\n");
+    } catch (const ParseException &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+
+  // Assignment to non-identifier
+  {
+    bool threw = false;
+    try {
+      parse_source("5 = 10;\n");
+    } catch (const ParseException &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+
+  // Unclosed parenthesis
+  {
+    bool threw = false;
+    try {
+      parse_source("(1 + 2;\n");
+    } catch (const ParseException &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+}
+
+int main() {
+  std::cout << "========================================\n";
+  std::cout << "  Running AST & Parser Test Suite\n";
+  std::cout << "========================================\n";
+
+  test_program_node();
+  test_var_decl_node();
+  test_if_node();
+  test_for_node();
+  test_return_node();
+  test_assign_node();
+  test_binary_op_node();
+  test_unary_op_node();
+  test_int_lit_node();
+  test_identifier_node();
+  test_compound_node();
+  test_syntax_errors();
+
+  std::cout << "========================================\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (12/12)\n";
+  std::cout << "========================================\n";
+  return 0;
+}
