@@ -31,6 +31,7 @@ void ARM64CodeGenerator::generate(const ProgramNode &program,
   current_offset_ = 8; // offset 0 and 8 reserved for saved x29, x30
   label_counter_ = 0;
   break_stack_.clear();
+  continue_stack_.clear();
 
   emit_raw("// ================================================================");
   emit_raw("// ARM64 (AArch64) Assembly for Raspberry Pi (ARMv8-A)");
@@ -257,9 +258,11 @@ void ARM64CodeGenerator::visit(const ForNode &node) {
   }
 
   break_stack_.push_back(end_lbl);
+  continue_stack_.push_back(step_lbl);
   if (node.body) {
     node.body->accept(*this);
   }
+  continue_stack_.pop_back();
   break_stack_.pop_back();
 
   emit_raw(step_lbl + ":");
@@ -281,9 +284,11 @@ void ARM64CodeGenerator::visit(const WhileNode &node) {
   }
 
   break_stack_.push_back(end_lbl);
+  continue_stack_.push_back(cond_lbl);
   if (node.body) {
     node.body->accept(*this);
   }
+  continue_stack_.pop_back();
   break_stack_.pop_back();
 
   emit_line("b " + cond_lbl);
@@ -292,14 +297,18 @@ void ARM64CodeGenerator::visit(const WhileNode &node) {
 
 void ARM64CodeGenerator::visit(const DoWhileNode &node) {
   std::string body_lbl = new_label(".Larm_dowhile_body");
+  std::string cond_lbl = new_label(".Larm_dowhile_cond");
   std::string end_lbl = new_label(".Larm_dowhile_end");
 
   break_stack_.push_back(end_lbl);
+  continue_stack_.push_back(cond_lbl);
   emit_raw(body_lbl + ":");
   if (node.body) {
     node.body->accept(*this);
   }
+  continue_stack_.pop_back();
 
+  emit_raw(cond_lbl + ":");
   if (node.cond) {
     node.cond->accept(*this);
     emit_line("cbnz x0, " + body_lbl);
@@ -378,6 +387,21 @@ void ARM64CodeGenerator::visit(const BreakNode &node) {
     unsupported(node, "break statement outside of loop or switch");
   }
   emit_line("b " + break_stack_.back());
+}
+
+void ARM64CodeGenerator::visit(const ContinueNode &node) {
+  if (continue_stack_.empty()) {
+    unsupported(node, "continue statement outside of loop");
+  }
+  emit_line("b " + continue_stack_.back());
+}
+
+void ARM64CodeGenerator::visit(const GotoNode &node) {
+  emit_line("b .Luser_" + node.label);
+}
+
+void ARM64CodeGenerator::visit(const LabelNode &node) {
+  emit_raw(".Luser_" + node.name + ":");
 }
 
 void ARM64CodeGenerator::visit(const ReturnNode &node) {

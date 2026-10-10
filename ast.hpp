@@ -19,6 +19,9 @@ enum class ASTNodeType {
   Switch,
   Case,
   Break,
+  Continue,
+  Goto,
+  Label,
   Return,
   Assign,
   BinaryOp,
@@ -77,6 +80,9 @@ class DoWhileNode;
 class SwitchNode;
 class CaseNode;
 class BreakNode;
+class ContinueNode;
+class GotoNode;
+class LabelNode;
 class ReturnNode;
 class AssignNode;
 class BinaryOpNode;
@@ -101,6 +107,9 @@ public:
   virtual void visit(const SwitchNode &node) = 0;
   virtual void visit(const CaseNode &node) = 0;
   virtual void visit(const BreakNode &node) = 0;
+  virtual void visit(const ContinueNode &node) = 0;
+  virtual void visit(const GotoNode &node) = 0;
+  virtual void visit(const LabelNode &node) = 0;
   virtual void visit(const ReturnNode &node) = 0;
   virtual void visit(const AssignNode &node) = 0;
   virtual void visit(const BinaryOpNode &node) = 0;
@@ -422,6 +431,51 @@ public:
   void print(int indent = 0) const override {
     print_indent(indent);
     std::cout << "Break\n";
+  }
+};
+
+class ContinueNode : public ASTNode {
+public:
+  explicit ContinueNode(int line = 0) : ASTNode(line) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::Continue; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    std::cout << "Continue\n";
+  }
+};
+
+class GotoNode : public ASTNode {
+public:
+  std::string label;
+
+  GotoNode(int line, std::string label)
+      : ASTNode(line), label(std::move(label)) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::Goto; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    std::cout << "Goto (" << label << ")\n";
+  }
+};
+
+class LabelNode : public ASTNode {
+public:
+  std::string name;
+
+  LabelNode(int line, std::string name)
+      : ASTNode(line), name(std::move(name)) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::Label; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    std::cout << "Label (" << name << ")\n";
   }
 };
 

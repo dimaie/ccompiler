@@ -283,6 +283,39 @@ static void test_break_node() {
   assert(prog->statements[0]->getType() == ASTNodeType::Break);
 }
 
+static void test_continue_node() {
+  std::cout << "Testing ContinueNode...\n";
+
+  auto prog = parse_source("continue;\n");
+  assert(prog->statements.size() == 1);
+  assert(prog->statements[0]->getType() == ASTNodeType::Continue);
+}
+
+static void test_goto_node() {
+  std::cout << "Testing GotoNode...\n";
+
+  auto prog = parse_source("goto my_label;\n");
+  assert(prog->statements.size() == 1);
+  assert(prog->statements[0]->getType() == ASTNodeType::Goto);
+  auto *g = static_cast<GotoNode *>(prog->statements[0].get());
+  assert(g->label == "my_label");
+}
+
+static void test_label_node() {
+  std::cout << "Testing LabelNode...\n";
+
+  auto prog = parse_source("start:\n"
+                           "x = 1;\n"
+                           ";\n"
+                           "goto start;\n");
+  assert(prog->statements.size() == 3);
+  assert(prog->statements[0]->getType() == ASTNodeType::Label);
+  auto *lbl = static_cast<LabelNode *>(prog->statements[0].get());
+  assert(lbl->name == "start");
+  assert(prog->statements[1]->getType() == ASTNodeType::Assign);
+  assert(prog->statements[2]->getType() == ASTNodeType::Goto);
+}
+
 static void test_return_node() {
   std::cout << "Testing ReturnNode...\n";
 
@@ -637,6 +670,39 @@ static void test_syntax_errors() {
     }
     assert(threw);
   }
+
+  // Missing ';' after continue
+  {
+    bool threw = false;
+    try {
+      parse_source("continue\n");
+    } catch (const ParseException &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+
+  // Missing label identifier after goto
+  {
+    bool threw = false;
+    try {
+      parse_source("goto ;\n");
+    } catch (const ParseException &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+
+  // Missing ';' after goto label
+  {
+    bool threw = false;
+    try {
+      parse_source("goto my_label\n");
+    } catch (const ParseException &) {
+      threw = true;
+    }
+    assert(threw);
+  }
 }
 
 int main() {
@@ -652,6 +718,9 @@ int main() {
   test_do_while_node();
   test_switch_node();
   test_break_node();
+  test_continue_node();
+  test_goto_node();
+  test_label_node();
   test_return_node();
   test_assign_node();
   test_binary_op_node();
@@ -662,7 +731,7 @@ int main() {
   test_syntax_errors();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (16/16)\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (19/19)\n";
   std::cout << "========================================\n";
   return 0;
 }

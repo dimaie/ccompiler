@@ -85,6 +85,18 @@ void ICodeGenerator::visit(const BreakNode &node) {
   unsupported(node, "break statement");
 }
 
+void ICodeGenerator::visit(const ContinueNode &node) {
+  unsupported(node, "continue statement");
+}
+
+void ICodeGenerator::visit(const GotoNode &node) {
+  unsupported(node, "goto statement");
+}
+
+void ICodeGenerator::visit(const LabelNode &node) {
+  unsupported(node, "label statement");
+}
+
 void ICodeGenerator::visit(const ReturnNode &node) {
   unsupported(node, "return statement");
 }

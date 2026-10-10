@@ -30,6 +30,7 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
   current_offset_ = 0;
   label_counter_ = 0;
   break_stack_.clear();
+  continue_stack_.clear();
 
   emit_raw("; ================================================================");
   emit_raw("; AVR Assembly generated for ATmega328P (Arduino UNO)");
@@ -316,9 +317,11 @@ void AVRCodeGenerator::visit(const ForNode &node) {
   }
 
   break_stack_.push_back(end_lbl);
+  continue_stack_.push_back(step_lbl);
   if (node.body) {
     node.body->accept(*this);
   }
+  continue_stack_.pop_back();
   break_stack_.pop_back();
 
   emit_raw(step_lbl + ":");
@@ -341,9 +344,11 @@ void AVRCodeGenerator::visit(const WhileNode &node) {
   }
 
   break_stack_.push_back(end_lbl);
+  continue_stack_.push_back(cond_lbl);
   if (node.body) {
     node.body->accept(*this);
   }
+  continue_stack_.pop_back();
   break_stack_.pop_back();
 
   emit_line("rjmp " + cond_lbl);
@@ -352,14 +357,18 @@ void AVRCodeGenerator::visit(const WhileNode &node) {
 
 void AVRCodeGenerator::visit(const DoWhileNode &node) {
   std::string body_lbl = new_label(".Lavr_dowhile_body");
+  std::string cond_lbl = new_label(".Lavr_dowhile_cond");
   std::string end_lbl = new_label(".Lavr_dowhile_end");
 
   break_stack_.push_back(end_lbl);
+  continue_stack_.push_back(cond_lbl);
   emit_raw(body_lbl + ":");
   if (node.body) {
     node.body->accept(*this);
   }
+  continue_stack_.pop_back();
 
+  emit_raw(cond_lbl + ":");
   if (node.cond) {
     node.cond->accept(*this);
     emit_line("sbiw r24, 0");
@@ -442,6 +451,21 @@ void AVRCodeGenerator::visit(const BreakNode &node) {
     unsupported(node, "break statement outside of loop or switch");
   }
   emit_line("rjmp " + break_stack_.back());
+}
+
+void AVRCodeGenerator::visit(const ContinueNode &node) {
+  if (continue_stack_.empty()) {
+    unsupported(node, "continue statement outside of loop");
+  }
+  emit_line("rjmp " + continue_stack_.back());
+}
+
+void AVRCodeGenerator::visit(const GotoNode &node) {
+  emit_line("rjmp .Luser_" + node.label);
+}
+
+void AVRCodeGenerator::visit(const LabelNode &node) {
+  emit_raw(".Luser_" + node.name + ":");
 }
 
 void AVRCodeGenerator::visit(const ReturnNode &node) {

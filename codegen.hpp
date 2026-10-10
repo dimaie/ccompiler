@@ -85,6 +85,9 @@ public:
   void visit(const SwitchNode &node) override;
   void visit(const CaseNode &node) override;
   void visit(const BreakNode &node) override;
+  void visit(const ContinueNode &node) override;
+  void visit(const GotoNode &node) override;
+  void visit(const LabelNode &node) override;
   void visit(const ReturnNode &node) override;
   void visit(const AssignNode &node) override;
   void visit(const BinaryOpNode &node) override;

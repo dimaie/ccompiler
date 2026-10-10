@@ -106,6 +106,7 @@ public:
 
     Token next();
     Token peek();
+    Token peek2();
 
     const char *getSource() const { return src_; }
     size_t getCursor() const { return cursor_; }
@@ -124,8 +125,8 @@ private:
     size_t cursor_{0};
     int line_{1};
     int col_{1};
-    Token lookahead_{};
-    bool has_lookahead_{false};
+    Token lookahead_[2]{};
+    int lookahead_count_{0};
 };
 
 const char *token_name(TokenType t);

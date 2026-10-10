@@ -29,6 +29,9 @@ public:
   void visit(const SwitchNode &node) override;
   void visit(const CaseNode &node) override;
   void visit(const BreakNode &node) override;
+  void visit(const ContinueNode &node) override;
+  void visit(const GotoNode &node) override;
+  void visit(const LabelNode &node) override;
   void visit(const ReturnNode &node) override;
   void visit(const AssignNode &node) override;
   void visit(const BinaryOpNode &node) override;
@@ -43,6 +46,7 @@ private:
   int label_counter_{0};
   std::string ret_label_{".Lmain_avr_ret"};
   std::vector<std::string> break_stack_;
+  std::vector<std::string> continue_stack_;
 
   std::string new_label(const std::string &prefix);
   void emit_line(const std::string &inst);

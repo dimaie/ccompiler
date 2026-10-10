@@ -16,9 +16,13 @@ statement
     | do_while_stmt
     | switch_stmt
     | break_stmt
+    | continue_stmt
+    | goto_stmt
+    | label_stmt
     | return_stmt
     | compound_stmt
-    | expr_stmt ;
+    | expr_stmt
+    | empty_stmt ;
 
 var_decl
     = "int" , IDENTIFIER , [ "=" , expr ] , ";" ;
@@ -44,6 +48,15 @@ case_clause
 break_stmt
     = "break" , ";" ;
 
+continue_stmt
+    = "continue" , ";" ;
+
+goto_stmt
+    = "goto" , IDENTIFIER , ";" ;
+
+label_stmt
+    = IDENTIFIER , ":" ;
+
 return_stmt
     = "return" , expr , ";" ;
 
@@ -52,6 +65,9 @@ compound_stmt
 
 expr_stmt
     = expr , ";" ;
+
+empty_stmt
+    = ";" ;
 
 
 (* 2. Expressions (Operator Precedence from lowest to highest) *)

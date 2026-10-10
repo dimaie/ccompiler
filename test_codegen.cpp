@@ -97,6 +97,23 @@ static void test_x86_64_codegen() {
     assert(sw_asm.find(".Lswitch_default") != std::string::npos);
     assert(sw_asm.find(".Lswitch_end") != std::string::npos);
   }
+
+  // Test continue in loops and goto/label
+  {
+    auto cg_prog = parse("int sum = 0;\n"
+                         "for (int i = 0; i < 10; i = i + 1) {\n"
+                         "  if (i == 5) continue;\n"
+                         "  sum = sum + i;\n"
+                         "}\n"
+                         "loop_start:\n"
+                         "sum = sum + 1;\n"
+                         "if (sum < 100) goto loop_start;\n"
+                         "return sum;\n");
+    std::string cg_asm = gen->generate_to_string(*cg_prog);
+    assert(cg_asm.find("jmp .Lfor_step") != std::string::npos);
+    assert(cg_asm.find(".Luser_loop_start:") != std::string::npos);
+    assert(cg_asm.find("jmp .Luser_loop_start") != std::string::npos);
+  }
 }
 
 static void test_arm64_codegen() {
@@ -152,6 +169,22 @@ static void test_arm64_codegen() {
     assert(sw_asm.find(".Larm_switch_default") != std::string::npos);
     assert(sw_asm.find(".Larm_switch_end") != std::string::npos);
   }
+
+  // Test continue and goto/label
+  {
+    auto cg_prog = parse("int i = 0;\n"
+                         "while (i < 10) {\n"
+                         "  i = i + 1;\n"
+                         "  if (i == 5) continue;\n"
+                         "}\n"
+                         "my_label:\n"
+                         "goto my_label;\n"
+                         "return i;\n");
+    std::string cg_asm = gen->generate_to_string(*cg_prog);
+    assert(cg_asm.find("b .Larm_while_cond") != std::string::npos);
+    assert(cg_asm.find(".Luser_my_label:") != std::string::npos);
+    assert(cg_asm.find("b .Luser_my_label") != std::string::npos);
+  }
 }
 
 static void test_avr_codegen() {
@@ -205,6 +238,22 @@ static void test_avr_codegen() {
     assert(sw_asm.find(".Lavr_switch_default") != std::string::npos);
     assert(sw_asm.find(".Lavr_switch_end") != std::string::npos);
   }
+
+  // Test continue and goto/label
+  {
+    auto cg_prog = parse("int i = 0;\n"
+                         "do {\n"
+                         "  i = i + 1;\n"
+                         "  if (i == 3) continue;\n"
+                         "} while (i < 5);\n"
+                         "target:\n"
+                         "goto target;\n"
+                         "return i;\n");
+    std::string cg_asm = gen->generate_to_string(*cg_prog);
+    assert(cg_asm.find("rjmp .Lavr_dowhile_cond") != std::string::npos);
+    assert(cg_asm.find(".Luser_target:") != std::string::npos);
+    assert(cg_asm.find("rjmp .Luser_target") != std::string::npos);
+  }
 }
 
 static void test_c_codegen() {
@@ -250,6 +299,22 @@ static void test_c_codegen() {
     assert(sw_c.find("case 1:") != std::string::npos);
     assert(sw_c.find("case 2:") != std::string::npos);
     assert(sw_c.find("default:") != std::string::npos);
+  }
+
+  // Test continue and goto/label
+  {
+    auto cg_prog = parse("int i = 0;\n"
+                         "start:\n"
+                         "while (i < 10) {\n"
+                         "  i = i + 1;\n"
+                         "  continue;\n"
+                         "}\n"
+                         "goto start;\n"
+                         "return i;\n");
+    std::string cg_c = gen->generate_to_string(*cg_prog);
+    assert(cg_c.find("continue;") != std::string::npos);
+    assert(cg_c.find("start:") != std::string::npos);
+    assert(cg_c.find("goto start;") != std::string::npos);
   }
 }
 
@@ -304,6 +369,68 @@ static void test_unsupported_features() {
       threw = true;
       assert(e.get_feature() == "switch statement");
       assert(e.get_arch() == "minimal_mock");
+    }
+    assert(threw);
+  }
+
+  // 3. Unimplemented AST node (continue statement) in an unsupported generator
+  {
+    MockMinimalCodeGenerator mock_gen;
+    auto prog = parse("continue;\n");
+
+    bool threw = false;
+    try {
+      mock_gen.generate_to_string(*prog);
+    } catch (const UnsupportedFeatureException &e) {
+      threw = true;
+      assert(e.get_feature() == "continue statement");
+      assert(e.get_arch() == "minimal_mock");
+    }
+    assert(threw);
+  }
+
+  // 4. Unimplemented AST node (goto statement) in an unsupported generator
+  {
+    MockMinimalCodeGenerator mock_gen;
+    auto prog = parse("goto foo;\n");
+
+    bool threw = false;
+    try {
+      mock_gen.generate_to_string(*prog);
+    } catch (const UnsupportedFeatureException &e) {
+      threw = true;
+      assert(e.get_feature() == "goto statement");
+      assert(e.get_arch() == "minimal_mock");
+    }
+    assert(threw);
+  }
+
+  // 5. Unimplemented AST node (label statement) in an unsupported generator
+  {
+    MockMinimalCodeGenerator mock_gen;
+    auto prog = parse("foo: return 0;\n");
+
+    bool threw = false;
+    try {
+      mock_gen.generate_to_string(*prog);
+    } catch (const UnsupportedFeatureException &e) {
+      threw = true;
+      assert(e.get_feature() == "label statement");
+      assert(e.get_arch() == "minimal_mock");
+    }
+    assert(threw);
+  }
+
+  // 6. Continue statement outside loop error in backends
+  {
+    auto x86 = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse("continue;\n");
+    bool threw = false;
+    try {
+      x86->generate_to_string(*prog);
+    } catch (const UnsupportedFeatureException &e) {
+      threw = true;
+      assert(e.get_feature() == "continue statement outside of loop");
     }
     assert(threw);
   }

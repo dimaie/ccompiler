@@ -26,7 +26,8 @@ void CCodeGenerator::visit(const ProgramNode &node) {
           stmt->getType() != ASTNodeType::For &&
           stmt->getType() != ASTNodeType::While &&
           stmt->getType() != ASTNodeType::DoWhile &&
-          stmt->getType() != ASTNodeType::Switch) {
+          stmt->getType() != ASTNodeType::Switch &&
+          stmt->getType() != ASTNodeType::Label) {
         *out_ << ";\n";
       } else {
         *out_ << "\n";
@@ -47,7 +48,8 @@ void CCodeGenerator::visit(const CompoundNode &node) {
           stmt->getType() != ASTNodeType::For &&
           stmt->getType() != ASTNodeType::While &&
           stmt->getType() != ASTNodeType::DoWhile &&
-          stmt->getType() != ASTNodeType::Switch) {
+          stmt->getType() != ASTNodeType::Switch &&
+          stmt->getType() != ASTNodeType::Label) {
         *out_ << ";\n";
       } else {
         *out_ << "\n";
@@ -185,7 +187,8 @@ void CCodeGenerator::visit(const CaseNode &node) {
           stmt->getType() != ASTNodeType::For &&
           stmt->getType() != ASTNodeType::While &&
           stmt->getType() != ASTNodeType::DoWhile &&
-          stmt->getType() != ASTNodeType::Switch) {
+          stmt->getType() != ASTNodeType::Switch &&
+          stmt->getType() != ASTNodeType::Label) {
         *out_ << ";\n";
       } else {
         *out_ << "\n";
@@ -197,6 +200,18 @@ void CCodeGenerator::visit(const CaseNode &node) {
 
 void CCodeGenerator::visit(const BreakNode &) {
   *out_ << "break";
+}
+
+void CCodeGenerator::visit(const ContinueNode &) {
+  *out_ << "continue";
+}
+
+void CCodeGenerator::visit(const GotoNode &node) {
+  *out_ << "goto " << node.label;
+}
+
+void CCodeGenerator::visit(const LabelNode &node) {
+  *out_ << node.name << ":";
 }
 
 void CCodeGenerator::visit(const ReturnNode &node) {

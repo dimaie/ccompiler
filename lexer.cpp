@@ -50,8 +50,7 @@ void Lexer::init(const char *source) {
   cursor_ = 0;
   line_ = 1;
   col_ = 1;
-  lookahead_ = Token{};
-  has_lookahead_ = false;
+  lookahead_count_ = 0;
 }
 
 void Lexer::init(std::string_view source) { init(source.data()); }
@@ -383,19 +382,33 @@ Token Lexer::scan_token() {
 }
 
 Token Lexer::next() {
-  if (has_lookahead_) {
-    has_lookahead_ = false;
-    return lookahead_;
+  if (lookahead_count_ > 0) {
+    Token tok = lookahead_[0];
+    lookahead_[0] = lookahead_[1];
+    lookahead_count_--;
+    return tok;
   }
   return scan_token();
 }
 
 Token Lexer::peek() {
-  if (!has_lookahead_) {
-    lookahead_ = scan_token();
-    has_lookahead_ = true;
+  if (lookahead_count_ == 0) {
+    lookahead_[0] = scan_token();
+    lookahead_count_ = 1;
   }
-  return lookahead_;
+  return lookahead_[0];
+}
+
+Token Lexer::peek2() {
+  if (lookahead_count_ == 0) {
+    lookahead_[0] = scan_token();
+    lookahead_[1] = scan_token();
+    lookahead_count_ = 2;
+  } else if (lookahead_count_ == 1) {
+    lookahead_[1] = scan_token();
+    lookahead_count_ = 2;
+  }
+  return lookahead_[1];
 }
 
 const char *token_name(TokenType t) {

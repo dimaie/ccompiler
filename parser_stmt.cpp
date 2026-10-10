@@ -107,7 +107,10 @@ std::unique_ptr<SwitchNode> Parser::parse_switch() {
              peek().type != TOK_KW_DEFAULT &&
              peek().type != TOK_RBRACE &&
              peek().type != TOK_EOF) {
-        stmts.push_back(parse_statement());
+        auto s = parse_statement();
+        if (s) {
+          stmts.push_back(std::move(s));
+        }
       }
       cases.push_back(std::make_unique<CaseNode>(case_tok.line, std::move(val),
                                                  std::move(stmts), false));
@@ -120,7 +123,10 @@ std::unique_ptr<SwitchNode> Parser::parse_switch() {
              peek().type != TOK_KW_DEFAULT &&
              peek().type != TOK_RBRACE &&
              peek().type != TOK_EOF) {
-        stmts.push_back(parse_statement());
+        auto s = parse_statement();
+        if (s) {
+          stmts.push_back(std::move(s));
+        }
       }
       cases.push_back(std::make_unique<CaseNode>(def_tok.line, nullptr,
                                                  std::move(stmts), true));
@@ -137,6 +143,19 @@ std::unique_ptr<BreakNode> Parser::parse_break() {
   Token t = expect(TOK_KW_BREAK, "Expected 'break'");
   expect(TOK_SEMICOLON, "Expected ';' after 'break'");
   return std::make_unique<BreakNode>(t.line);
+}
+
+std::unique_ptr<ContinueNode> Parser::parse_continue() {
+  Token t = expect(TOK_KW_CONTINUE, "Expected 'continue'");
+  expect(TOK_SEMICOLON, "Expected ';' after 'continue'");
+  return std::make_unique<ContinueNode>(t.line);
+}
+
+std::unique_ptr<GotoNode> Parser::parse_goto() {
+  Token t = expect(TOK_KW_GOTO, "Expected 'goto'");
+  Token label_tok = expect(TOK_IDENTIFIER, "Expected label identifier after 'goto'");
+  expect(TOK_SEMICOLON, "Expected ';' after goto statement");
+  return std::make_unique<GotoNode>(t.line, label_tok.text);
 }
 
 std::unique_ptr<ReturnNode> Parser::parse_return() {
@@ -166,6 +185,21 @@ std::unique_ptr<ASTNode> Parser::parse_statement() {
   }
   if (t.type == TOK_KW_BREAK) {
     return parse_break();
+  }
+  if (t.type == TOK_KW_CONTINUE) {
+    return parse_continue();
+  }
+  if (t.type == TOK_KW_GOTO) {
+    return parse_goto();
+  }
+  if (t.type == TOK_IDENTIFIER && lexer_->peek2().type == TOK_COLON) {
+    Token label_tok = expect(TOK_IDENTIFIER, "Expected label identifier");
+    expect(TOK_COLON, "Expected ':' after label");
+    return std::make_unique<LabelNode>(label_tok.line, label_tok.text);
+  }
+  if (t.type == TOK_SEMICOLON) {
+    expect(TOK_SEMICOLON, "Expected ';'");
+    return nullptr;
   }
   if (t.type == TOK_KW_IF) {
     return parse_if();
