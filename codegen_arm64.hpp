@@ -1,0 +1,48 @@
+#ifndef CODEGEN_ARM64_HPP
+#define CODEGEN_ARM64_HPP
+
+#include "codegen.hpp"
+#include <ostream>
+#include <string>
+#include <unordered_map>
+
+/**
+ * @brief Code generator for 64-bit ARM architecture (AArch64 / ARMv8-A),
+ * targeting Raspberry Pi (Pi 3, 4, 5, Zero 2 W) running 64-bit Raspberry Pi OS / Linux.
+ * Follows standard AAPCS64 calling convention (x0 return register, x29 frame pointer).
+ */
+class ARM64CodeGenerator : public ICodeGenerator {
+public:
+  ARM64CodeGenerator() = default;
+
+  TargetArch get_arch() const override { return TargetArch::ARM64; }
+  const char *get_arch_name() const override { return "arm64"; }
+
+  void generate(const ProgramNode &program, std::ostream &out) override;
+
+  void visit(const ProgramNode &node) override;
+  void visit(const CompoundNode &node) override;
+  void visit(const VarDeclNode &node) override;
+  void visit(const IfNode &node) override;
+  void visit(const ForNode &node) override;
+  void visit(const ReturnNode &node) override;
+  void visit(const AssignNode &node) override;
+  void visit(const BinaryOpNode &node) override;
+  void visit(const UnaryOpNode &node) override;
+  void visit(const IntLitNode &node) override;
+  void visit(const IdentifierNode &node) override;
+
+private:
+  std::ostream *out_{nullptr};
+  std::unordered_map<std::string, int> var_offsets_;
+  int current_offset_{0};
+  int label_counter_{0};
+  std::string ret_label_{".Lmain_arm_ret"};
+
+  std::string new_label(const std::string &prefix);
+  void emit_line(const std::string &inst);
+  void emit_raw(const std::string &line);
+  int get_var_offset(const std::string &name);
+};
+
+#endif // CODEGEN_ARM64_HPP

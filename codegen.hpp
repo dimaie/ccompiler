@@ -10,6 +10,7 @@
 enum class TargetArch {
   X86_64,
   AVR,
+  ARM64,
   C_Transpiler
 };
 

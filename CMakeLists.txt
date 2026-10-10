@@ -22,6 +22,7 @@ set(PARSER_SOURCES
 set(CODEGEN_SOURCES
     codegen.cpp
     codegen_x86_64.cpp
+    codegen_arm64.cpp
     codegen_avr.cpp
     codegen_c.cpp
 )
