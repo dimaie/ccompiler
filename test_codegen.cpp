@@ -183,6 +183,99 @@ static void test_c_codegen() {
   }
 }
 
+// Mock code generator that does NOT implement while or for loops
+class MockMinimalCodeGenerator : public ICodeGenerator {
+public:
+  TargetArch get_arch() const override { return TargetArch::X86_64; }
+  const char *get_arch_name() const override { return "minimal_mock"; }
+  void generate(const ProgramNode &program, std::ostream &) override {
+    program.accept(*this);
+  }
+  // Only overrides ProgramNode and ReturnNode; leaves everything else to ICodeGenerator defaults
+  void visit(const ProgramNode &node) override {
+    for (const auto &stmt : node.statements) {
+      if (stmt) stmt->accept(*this);
+    }
+  }
+  void visit(const ReturnNode &) override {}
+};
+
+static void test_unsupported_features() {
+  std::cout << "Testing Unsupported Feature Error Handling...\n";
+
+  // 1. Unimplemented AST node in an unsupported generator requires zero code in the generator
+  {
+    MockMinimalCodeGenerator mock_gen;
+    auto prog = parse("while (1) { return 0; }\n");
+
+    bool threw = false;
+    try {
+      mock_gen.generate_to_string(*prog);
+    } catch (const UnsupportedFeatureException &e) {
+      threw = true;
+      assert(e.get_feature() == "while loop");
+      assert(e.get_arch() == "minimal_mock");
+      assert(e.get_line() == 1);
+      std::string msg = e.what();
+      assert(msg.find("Feature 'while loop' is not supported by minimal_mock code generator (line 1)") != std::string::npos);
+    }
+    assert(threw);
+  }
+
+  // 2. Unsupported operator in x86_64 generator
+  {
+    auto x86 = CodeGeneratorFactory::create("x86_64");
+    auto prog = std::make_unique<ProgramNode>(42);
+    prog->append(std::make_unique<BinaryOpNode>(42, TOK_ASSIGN, std::make_unique<IntLitNode>(42, 1), std::make_unique<IntLitNode>(42, 2)));
+
+    bool threw = false;
+    try {
+      x86->generate_to_string(*prog);
+    } catch (const UnsupportedFeatureException &e) {
+      threw = true;
+      assert(e.get_arch() == "x86_64");
+      assert(e.get_line() == 42);
+      std::string msg = e.what();
+      assert(msg.find("Binary operator '='") != std::string::npos);
+    }
+    assert(threw);
+  }
+
+  // 3. Unsupported operator in AVR generator
+  {
+    auto avr = CodeGeneratorFactory::create("avr");
+    auto prog = std::make_unique<ProgramNode>(10);
+    prog->append(std::make_unique<BinaryOpNode>(10, TOK_ASSIGN, std::make_unique<IntLitNode>(10, 1), std::make_unique<IntLitNode>(10, 2)));
+
+    bool threw = false;
+    try {
+      avr->generate_to_string(*prog);
+    } catch (const UnsupportedFeatureException &e) {
+      threw = true;
+      assert(e.get_arch() == "avr");
+      assert(e.get_line() == 10);
+    }
+    assert(threw);
+  }
+
+  // 4. Unsupported operator in ARM64 generator
+  {
+    auto arm = CodeGeneratorFactory::create("arm64");
+    auto prog = std::make_unique<ProgramNode>(15);
+    prog->append(std::make_unique<BinaryOpNode>(15, TOK_ASSIGN, std::make_unique<IntLitNode>(15, 1), std::make_unique<IntLitNode>(15, 2)));
+
+    bool threw = false;
+    try {
+      arm->generate_to_string(*prog);
+    } catch (const UnsupportedFeatureException &e) {
+      threw = true;
+      assert(e.get_arch() == "arm64");
+      assert(e.get_line() == 15);
+    }
+    assert(threw);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Code Generator Test Suite\n";
@@ -193,9 +286,11 @@ int main() {
   test_arm64_codegen();
   test_avr_codegen();
   test_c_codegen();
+  test_unsupported_features();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL CODEGEN TESTS PASSED! (5/5)\n";
+  std::cout << "  ALL CODEGEN TESTS PASSED! (6/6)\n";
   std::cout << "========================================\n";
   return 0;
 }
+

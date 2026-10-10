@@ -122,7 +122,7 @@ void ARM64CodeGenerator::visit(const UnaryOpNode &node) {
     emit_line("mvn x0, x0");
     break;
   default:
-    break;
+    unsupported("Unary operator '" + std::string(token_op_str(node.op)) + "'", node.line);
   }
 }
 
@@ -215,7 +215,7 @@ void ARM64CodeGenerator::visit(const BinaryOpNode &node) {
     emit_line("cset x0, ge");
     break;
   default:
-    break;
+    unsupported("Binary operator '" + std::string(token_op_str(node.op)) + "'", node.line);
   }
 }
 

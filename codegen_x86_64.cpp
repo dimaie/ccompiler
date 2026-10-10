@@ -108,7 +108,7 @@ void X86_64CodeGenerator::visit(const UnaryOpNode &node) {
     emit_line("notq %rax");
     break;
   default:
-    break;
+    unsupported("Unary operator '" + std::string(token_op_str(node.op)) + "'", node.line);
   }
 }
 
@@ -208,7 +208,7 @@ void X86_64CodeGenerator::visit(const BinaryOpNode &node) {
     emit_line("movzbq %al, %rax");
     break;
   default:
-    break;
+    unsupported("Binary operator '" + std::string(token_op_str(node.op)) + "'", node.line);
   }
 }
 

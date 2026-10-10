@@ -154,7 +154,7 @@ void AVRCodeGenerator::visit(const UnaryOpNode &node) {
     break;
   }
   default:
-    break;
+    unsupported("Unary operator '" + std::string(token_op_str(node.op)) + "'", node.line);
   }
 }
 
@@ -272,7 +272,7 @@ void AVRCodeGenerator::visit(const BinaryOpNode &node) {
     break;
   }
   default:
-    break;
+    unsupported("Binary operator '" + std::string(token_op_str(node.op)) + "'", node.line);
   }
 }
 
