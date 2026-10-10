@@ -794,6 +794,28 @@ static void test_lexer_peek() {
   // Now peek() is colon, peek(2) is return keyword
   assert(lexer.peek().type == TOK_COLON);
   assert(lexer.peek(2).type == TOK_KW_RETURN);
+
+  // Test lookahead depth up to LOOKAHEAD_BUFFER (4)
+  {
+    Lexer lex;
+    lex.init("a + b * c;");
+    assert(lex.peek(1).type == TOK_IDENTIFIER && std::strcmp(lex.peek(1).text, "a") == 0);
+    assert(lex.peek(2).type == TOK_PLUS);
+    assert(lex.peek(3).type == TOK_IDENTIFIER && std::strcmp(lex.peek(3).text, "b") == 0);
+    assert(lex.peek(4).type == TOK_STAR);
+
+    // Consume 'a'
+    assert(lex.next().type == TOK_IDENTIFIER);
+    // Now peek(1) is '+', peek(2) is 'b', peek(3) is '*'
+    assert(lex.peek(1).type == TOK_PLUS);
+    assert(lex.peek(2).type == TOK_IDENTIFIER && std::strcmp(lex.peek(2).text, "b") == 0);
+    assert(lex.peek(3).type == TOK_STAR);
+
+    // Consume '+'
+    assert(lex.next().type == TOK_PLUS);
+    assert(lex.peek(1).type == TOK_IDENTIFIER && std::strcmp(lex.peek(1).text, "b") == 0);
+    assert(lex.peek(2).type == TOK_STAR);
+  }
 }
 
 int main() {

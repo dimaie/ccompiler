@@ -391,7 +391,9 @@ Token Lexer::scan_token() {
 Token Lexer::next() {
   if (lookahead_count_ > 0) {
     Token tok = lookahead_[0];
-    lookahead_[0] = lookahead_[1];
+    for (int i = 0; i < lookahead_count_ - 1; ++i) {
+      lookahead_[i] = lookahead_[i + 1];
+    }
     lookahead_count_--;
     return tok;
   }
@@ -402,7 +404,11 @@ Token Lexer::peek(size_t k) {
   if (k < 1) {
     k = 1;
   }
-  while (lookahead_count_ < static_cast<int>(k) && lookahead_count_ < 2) {
+  if (k > LOOKAHEAD_BUFFER) {
+    k = LOOKAHEAD_BUFFER;
+  }
+  while (lookahead_count_ < static_cast<int>(k) &&
+         lookahead_count_ < static_cast<int>(LOOKAHEAD_BUFFER)) {
     lookahead_[lookahead_count_++] = scan_token();
   }
   return lookahead_[k - 1];
