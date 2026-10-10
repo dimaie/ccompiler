@@ -220,6 +220,69 @@ static void test_do_while_node() {
   }
 }
 
+static void test_switch_node() {
+  std::cout << "Testing SwitchNode & CaseNode...\n";
+
+  // Standard switch with cases and default
+  {
+    auto prog = parse_source("switch (x) {\n"
+                             "  case 1:\n"
+                             "    a = 10;\n"
+                             "    break;\n"
+                             "  case 2:\n"
+                             "    a = 20;\n"
+                             "    break;\n"
+                             "  default:\n"
+                             "    a = 0;\n"
+                             "    break;\n"
+                             "}\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::Switch);
+    auto *sw = static_cast<SwitchNode *>(prog->statements[0].get());
+    assert(sw->cond != nullptr && sw->cond->getType() == ASTNodeType::Identifier);
+    assert(sw->cases.size() == 3);
+
+    // Case 1
+    assert(!sw->cases[0]->is_default);
+    assert(sw->cases[0]->value != nullptr && sw->cases[0]->value->getType() == ASTNodeType::IntLit);
+    assert(sw->cases[0]->statements.size() == 2);
+    assert(sw->cases[0]->statements[0]->getType() == ASTNodeType::Assign);
+    assert(sw->cases[0]->statements[1]->getType() == ASTNodeType::Break);
+
+    // Case 2
+    assert(!sw->cases[1]->is_default);
+    assert(sw->cases[1]->value != nullptr);
+    assert(sw->cases[1]->statements.size() == 2);
+
+    // Default case
+    assert(sw->cases[2]->is_default);
+    assert(sw->cases[2]->value == nullptr);
+    assert(sw->cases[2]->statements.size() == 2);
+  }
+
+  // Switch with stacked cases
+  {
+    auto prog = parse_source("switch (x) {\n"
+                             "  case 1:\n"
+                             "  case 2:\n"
+                             "    return 1;\n"
+                             "}\n");
+    assert(prog->statements.size() == 1);
+    auto *sw = static_cast<SwitchNode *>(prog->statements[0].get());
+    assert(sw->cases.size() == 2);
+    assert(sw->cases[0]->statements.empty());
+    assert(sw->cases[1]->statements.size() == 1);
+  }
+}
+
+static void test_break_node() {
+  std::cout << "Testing BreakNode...\n";
+
+  auto prog = parse_source("break;\n");
+  assert(prog->statements.size() == 1);
+  assert(prog->statements[0]->getType() == ASTNodeType::Break);
+}
+
 static void test_return_node() {
   std::cout << "Testing ReturnNode...\n";
 
@@ -552,6 +615,28 @@ static void test_syntax_errors() {
     }
     assert(threw);
   }
+
+  // Missing ':' after case value
+  {
+    bool threw = false;
+    try {
+      parse_source("switch (x) { case 1 a = 1; }\n");
+    } catch (const ParseException &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+
+  // Missing ';' after break
+  {
+    bool threw = false;
+    try {
+      parse_source("break\n");
+    } catch (const ParseException &) {
+      threw = true;
+    }
+    assert(threw);
+  }
 }
 
 int main() {
@@ -565,6 +650,8 @@ int main() {
   test_for_node();
   test_while_node();
   test_do_while_node();
+  test_switch_node();
+  test_break_node();
   test_return_node();
   test_assign_node();
   test_binary_op_node();
@@ -575,7 +662,7 @@ int main() {
   test_syntax_errors();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (14/14)\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (16/16)\n";
   std::cout << "========================================\n";
   return 0;
 }

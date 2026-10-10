@@ -22,6 +22,8 @@ statement
       | for_stmt
       | while_stmt
       | do_while_stmt
+      | switch_stmt
+      | break_stmt
       | return_stmt
       | compound_stmt
       | expr_stmt ;
@@ -40,6 +42,15 @@ while_stmt
 
 do_while_stmt
     ::= "do" statement "while" "(" expr ")" ";" ;
+
+switch_stmt
+    ::= "switch" "(" expr ")" "{" case_clause* "}" ;
+
+case_clause
+    ::= ( "case" expr ":" | "default" ":" ) statement* ;
+
+break_stmt
+    ::= "break" ";" ;
 
 return_stmt
     ::= "return" expr ";" ;

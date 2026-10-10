@@ -46,6 +46,7 @@ enum TokenType {
     TOK_LBRACKET,   /**< '[' Subscript opening bracket */
     TOK_RBRACKET,   /**< ']' Subscript closing bracket */
     TOK_SEMICOLON,  /**< ';' Statement terminator */
+    TOK_COLON,      /**< ':' Colon delimiter */
     TOK_COMMA,      /**< ',' List delimiter */
     TOK_DOT,        /**< '.' Structure member access */
     TOK_ARROW,      /**< '->' Structure pointer member access */

@@ -73,6 +73,18 @@ void ICodeGenerator::visit(const DoWhileNode &node) {
   unsupported(node, "do..while loop");
 }
 
+void ICodeGenerator::visit(const SwitchNode &node) {
+  unsupported(node, "switch statement");
+}
+
+void ICodeGenerator::visit(const CaseNode &node) {
+  unsupported(node, "case label");
+}
+
+void ICodeGenerator::visit(const BreakNode &node) {
+  unsupported(node, "break statement");
+}
+
 void ICodeGenerator::visit(const ReturnNode &node) {
   unsupported(node, "return statement");
 }

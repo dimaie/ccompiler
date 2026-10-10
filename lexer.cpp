@@ -253,6 +253,9 @@ Token Lexer::scan_token() {
   case ';':
     tok.type = TOK_SEMICOLON;
     break;
+  case ':':
+    tok.type = TOK_COLON;
+    break;
   case ',':
     tok.type = TOK_COMMA;
     break;

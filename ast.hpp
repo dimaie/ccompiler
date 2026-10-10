@@ -16,6 +16,9 @@ enum class ASTNodeType {
   For,
   While,
   DoWhile,
+  Switch,
+  Case,
+  Break,
   Return,
   Assign,
   BinaryOp,
@@ -71,6 +74,9 @@ class IfNode;
 class ForNode;
 class WhileNode;
 class DoWhileNode;
+class SwitchNode;
+class CaseNode;
+class BreakNode;
 class ReturnNode;
 class AssignNode;
 class BinaryOpNode;
@@ -92,6 +98,9 @@ public:
   virtual void visit(const ForNode &node) = 0;
   virtual void visit(const WhileNode &node) = 0;
   virtual void visit(const DoWhileNode &node) = 0;
+  virtual void visit(const SwitchNode &node) = 0;
+  virtual void visit(const CaseNode &node) = 0;
+  virtual void visit(const BreakNode &node) = 0;
   virtual void visit(const ReturnNode &node) = 0;
   virtual void visit(const AssignNode &node) = 0;
   virtual void visit(const BinaryOpNode &node) = 0;
@@ -335,6 +344,84 @@ public:
     if (cond) {
       cond->print(indent + 2);
     }
+  }
+};
+
+class CaseNode : public ASTNode {
+public:
+  std::unique_ptr<ASTNode> value; // nullptr if default
+  bool is_default{false};
+  std::vector<std::unique_ptr<ASTNode>> statements;
+
+  CaseNode(int line, std::unique_ptr<ASTNode> value,
+           std::vector<std::unique_ptr<ASTNode>> statements,
+           bool is_default = false)
+      : ASTNode(line), value(std::move(value)), is_default(is_default),
+        statements(std::move(statements)) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::Case; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    if (is_default) {
+      std::cout << "Default\n";
+    } else {
+      std::cout << "Case\n";
+      if (value) {
+        value->print(indent + 1);
+      }
+    }
+    for (const auto &stmt : statements) {
+      if (stmt) {
+        stmt->print(indent + 1);
+      }
+    }
+  }
+};
+
+class SwitchNode : public ASTNode {
+public:
+  std::unique_ptr<ASTNode> cond;
+  std::vector<std::unique_ptr<CaseNode>> cases;
+
+  SwitchNode(int line, std::unique_ptr<ASTNode> cond,
+             std::vector<std::unique_ptr<CaseNode>> cases)
+      : ASTNode(line), cond(std::move(cond)), cases(std::move(cases)) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::Switch; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    std::cout << "Switch\n";
+
+    print_indent(indent + 1);
+    std::cout << "[Condition]\n";
+    if (cond) {
+      cond->print(indent + 2);
+    }
+
+    print_indent(indent + 1);
+    std::cout << "[Cases]\n";
+    for (const auto &c : cases) {
+      if (c) {
+        c->print(indent + 2);
+      }
+    }
+  }
+};
+
+class BreakNode : public ASTNode {
+public:
+  explicit BreakNode(int line = 0) : ASTNode(line) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::Break; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    std::cout << "Break\n";
   }
 };
 

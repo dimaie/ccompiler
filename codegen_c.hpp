@@ -24,6 +24,9 @@ public:
   void visit(const ForNode &node) override;
   void visit(const WhileNode &node) override;
   void visit(const DoWhileNode &node) override;
+  void visit(const SwitchNode &node) override;
+  void visit(const CaseNode &node) override;
+  void visit(const BreakNode &node) override;
   void visit(const ReturnNode &node) override;
   void visit(const AssignNode &node) override;
   void visit(const BinaryOpNode &node) override;

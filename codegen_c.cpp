@@ -25,7 +25,8 @@ void CCodeGenerator::visit(const ProgramNode &node) {
           stmt->getType() != ASTNodeType::If &&
           stmt->getType() != ASTNodeType::For &&
           stmt->getType() != ASTNodeType::While &&
-          stmt->getType() != ASTNodeType::DoWhile) {
+          stmt->getType() != ASTNodeType::DoWhile &&
+          stmt->getType() != ASTNodeType::Switch) {
         *out_ << ";\n";
       } else {
         *out_ << "\n";
@@ -45,7 +46,8 @@ void CCodeGenerator::visit(const CompoundNode &node) {
           stmt->getType() != ASTNodeType::If &&
           stmt->getType() != ASTNodeType::For &&
           stmt->getType() != ASTNodeType::While &&
-          stmt->getType() != ASTNodeType::DoWhile) {
+          stmt->getType() != ASTNodeType::DoWhile &&
+          stmt->getType() != ASTNodeType::Switch) {
         *out_ << ";\n";
       } else {
         *out_ << "\n";
@@ -145,8 +147,61 @@ void CCodeGenerator::visit(const DoWhileNode &node) {
   *out_ << ");";
 }
 
+void CCodeGenerator::visit(const SwitchNode &node) {
+  *out_ << "switch (";
+  if (node.cond) {
+    node.cond->accept(*this);
+  }
+  *out_ << ") {\n";
+  indent_++;
+  for (const auto &c : node.cases) {
+    if (c) {
+      c->accept(*this);
+    }
+  }
+  indent_--;
+  print_indent();
+  *out_ << "}";
+}
+
+void CCodeGenerator::visit(const CaseNode &node) {
+  print_indent();
+  if (node.is_default) {
+    *out_ << "default:\n";
+  } else {
+    *out_ << "case ";
+    if (node.value) {
+      node.value->accept(*this);
+    }
+    *out_ << ":\n";
+  }
+  indent_++;
+  for (const auto &stmt : node.statements) {
+    if (stmt) {
+      print_indent();
+      stmt->accept(*this);
+      if (stmt->getType() != ASTNodeType::Compound &&
+          stmt->getType() != ASTNodeType::If &&
+          stmt->getType() != ASTNodeType::For &&
+          stmt->getType() != ASTNodeType::While &&
+          stmt->getType() != ASTNodeType::DoWhile &&
+          stmt->getType() != ASTNodeType::Switch) {
+        *out_ << ";\n";
+      } else {
+        *out_ << "\n";
+      }
+    }
+  }
+  indent_--;
+}
+
+void CCodeGenerator::visit(const BreakNode &) {
+  *out_ << "break";
+}
+
 void CCodeGenerator::visit(const ReturnNode &node) {
   *out_ << "return ";
   if (node.expr) node.expr->accept(*this);
 }
+
 

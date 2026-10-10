@@ -87,6 +87,58 @@ std::unique_ptr<DoWhileNode> Parser::parse_do_while() {
   return std::make_unique<DoWhileNode>(t.line, std::move(body), std::move(cond));
 }
 
+std::unique_ptr<SwitchNode> Parser::parse_switch() {
+  Token t = expect(TOK_KW_SWITCH, "Expected 'switch'");
+  expect(TOK_LPAREN, "Expected '(' after 'switch'");
+  auto cond = parse_expr();
+  expect(TOK_RPAREN, "Expected ')' after switch condition");
+  expect(TOK_LBRACE, "Expected '{' before switch body");
+
+  std::vector<std::unique_ptr<CaseNode>> cases;
+
+  while (peek().type != TOK_RBRACE && peek().type != TOK_EOF) {
+    if (peek().type == TOK_KW_CASE) {
+      Token case_tok = expect(TOK_KW_CASE, "Expected 'case'");
+      auto val = parse_expr();
+      expect(TOK_COLON, "Expected ':' after case value");
+
+      std::vector<std::unique_ptr<ASTNode>> stmts;
+      while (peek().type != TOK_KW_CASE &&
+             peek().type != TOK_KW_DEFAULT &&
+             peek().type != TOK_RBRACE &&
+             peek().type != TOK_EOF) {
+        stmts.push_back(parse_statement());
+      }
+      cases.push_back(std::make_unique<CaseNode>(case_tok.line, std::move(val),
+                                                 std::move(stmts), false));
+    } else if (peek().type == TOK_KW_DEFAULT) {
+      Token def_tok = expect(TOK_KW_DEFAULT, "Expected 'default'");
+      expect(TOK_COLON, "Expected ':' after 'default'");
+
+      std::vector<std::unique_ptr<ASTNode>> stmts;
+      while (peek().type != TOK_KW_CASE &&
+             peek().type != TOK_KW_DEFAULT &&
+             peek().type != TOK_RBRACE &&
+             peek().type != TOK_EOF) {
+        stmts.push_back(parse_statement());
+      }
+      cases.push_back(std::make_unique<CaseNode>(def_tok.line, nullptr,
+                                                 std::move(stmts), true));
+    } else {
+      parse_error(peek(), "Expected 'case' or 'default' inside switch body");
+    }
+  }
+
+  expect(TOK_RBRACE, "Expected '}' after switch body");
+  return std::make_unique<SwitchNode>(t.line, std::move(cond), std::move(cases));
+}
+
+std::unique_ptr<BreakNode> Parser::parse_break() {
+  Token t = expect(TOK_KW_BREAK, "Expected 'break'");
+  expect(TOK_SEMICOLON, "Expected ';' after 'break'");
+  return std::make_unique<BreakNode>(t.line);
+}
+
 std::unique_ptr<ReturnNode> Parser::parse_return() {
   Token t = expect(TOK_KW_RETURN, "Expected 'return'");
   auto expr = parse_expr();
@@ -108,6 +160,12 @@ std::unique_ptr<ASTNode> Parser::parse_statement() {
   }
   if (t.type == TOK_KW_DO) {
     return parse_do_while();
+  }
+  if (t.type == TOK_KW_SWITCH) {
+    return parse_switch();
+  }
+  if (t.type == TOK_KW_BREAK) {
+    return parse_break();
   }
   if (t.type == TOK_KW_IF) {
     return parse_if();

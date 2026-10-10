@@ -29,6 +29,7 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
   var_offsets_.clear();
   current_offset_ = 0;
   label_counter_ = 0;
+  break_stack_.clear();
 
   emit_raw(".globl main");
   emit_raw("main:");
@@ -250,9 +251,11 @@ void X86_64CodeGenerator::visit(const ForNode &node) {
     emit_line("je " + end_lbl);
   }
 
+  break_stack_.push_back(end_lbl);
   if (node.body) {
     node.body->accept(*this);
   }
+  break_stack_.pop_back();
 
   emit_raw(step_lbl + ":");
   if (node.step) {
@@ -273,9 +276,11 @@ void X86_64CodeGenerator::visit(const WhileNode &node) {
     emit_line("je " + end_lbl);
   }
 
+  break_stack_.push_back(end_lbl);
   if (node.body) {
     node.body->accept(*this);
   }
+  break_stack_.pop_back();
 
   emit_line("jmp " + cond_lbl);
   emit_raw(end_lbl + ":");
@@ -283,7 +288,9 @@ void X86_64CodeGenerator::visit(const WhileNode &node) {
 
 void X86_64CodeGenerator::visit(const DoWhileNode &node) {
   std::string body_lbl = new_label(".Ldowhile_body");
+  std::string end_lbl = new_label(".Ldowhile_end");
 
+  break_stack_.push_back(end_lbl);
   emit_raw(body_lbl + ":");
   if (node.body) {
     node.body->accept(*this);
@@ -294,6 +301,81 @@ void X86_64CodeGenerator::visit(const DoWhileNode &node) {
     emit_line("cmpq $0, %rax");
     emit_line("jne " + body_lbl);
   }
+  break_stack_.pop_back();
+  emit_raw(end_lbl + ":");
+}
+
+void X86_64CodeGenerator::visit(const SwitchNode &node) {
+  std::string end_lbl = new_label(".Lswitch_end");
+  std::string default_lbl = "";
+  int cond_offset = get_var_offset("@switch_cond_" + std::to_string(label_counter_));
+
+  // 1. Evaluate switch condition into %rax and save in frame slot
+  if (node.cond) {
+    node.cond->accept(*this);
+  }
+  emit_line("movq %rax, -" + std::to_string(cond_offset) + "(%rbp)");
+
+  // 2. Generate case labels and comparison branches
+  std::vector<std::string> case_labels;
+  case_labels.reserve(node.cases.size());
+
+  for (size_t i = 0; i < node.cases.size(); ++i) {
+    const auto &c = node.cases[i];
+    if (c->is_default) {
+      std::string d_lbl = new_label(".Lswitch_default");
+      default_lbl = d_lbl;
+      case_labels.push_back(d_lbl);
+    } else {
+      std::string c_lbl = new_label(".Lswitch_case");
+      case_labels.push_back(c_lbl);
+
+      if (c->value) {
+        c->value->accept(*this);
+      }
+      emit_line("movq %rax, %r10");
+      emit_line("movq -" + std::to_string(cond_offset) + "(%rbp), %rax");
+      emit_line("cmpq %r10, %rax");
+      emit_line("je " + c_lbl);
+    }
+  }
+
+  // 3. Fallthrough to default or end
+  if (!default_lbl.empty()) {
+    emit_line("jmp " + default_lbl);
+  } else {
+    emit_line("jmp " + end_lbl);
+  }
+
+  // 4. Emit case bodies
+  break_stack_.push_back(end_lbl);
+
+  for (size_t i = 0; i < node.cases.size(); ++i) {
+    emit_raw(case_labels[i] + ":");
+    for (const auto &stmt : node.cases[i]->statements) {
+      if (stmt) {
+        stmt->accept(*this);
+      }
+    }
+  }
+
+  break_stack_.pop_back();
+  emit_raw(end_lbl + ":");
+}
+
+void X86_64CodeGenerator::visit(const CaseNode &node) {
+  for (const auto &stmt : node.statements) {
+    if (stmt) {
+      stmt->accept(*this);
+    }
+  }
+}
+
+void X86_64CodeGenerator::visit(const BreakNode &node) {
+  if (break_stack_.empty()) {
+    unsupported(node, "break statement outside of loop or switch");
+  }
+  emit_line("jmp " + break_stack_.back());
 }
 
 void X86_64CodeGenerator::visit(const ReturnNode &node) {

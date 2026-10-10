@@ -29,6 +29,7 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
   var_offsets_.clear();
   current_offset_ = 0;
   label_counter_ = 0;
+  break_stack_.clear();
 
   emit_raw("; ================================================================");
   emit_raw("; AVR Assembly generated for ATmega328P (Arduino UNO)");
@@ -314,9 +315,11 @@ void AVRCodeGenerator::visit(const ForNode &node) {
     emit_line("breq " + end_lbl);
   }
 
+  break_stack_.push_back(end_lbl);
   if (node.body) {
     node.body->accept(*this);
   }
+  break_stack_.pop_back();
 
   emit_raw(step_lbl + ":");
   if (node.step) {
@@ -337,9 +340,11 @@ void AVRCodeGenerator::visit(const WhileNode &node) {
     emit_line("breq " + end_lbl);
   }
 
+  break_stack_.push_back(end_lbl);
   if (node.body) {
     node.body->accept(*this);
   }
+  break_stack_.pop_back();
 
   emit_line("rjmp " + cond_lbl);
   emit_raw(end_lbl + ":");
@@ -347,7 +352,9 @@ void AVRCodeGenerator::visit(const WhileNode &node) {
 
 void AVRCodeGenerator::visit(const DoWhileNode &node) {
   std::string body_lbl = new_label(".Lavr_dowhile_body");
+  std::string end_lbl = new_label(".Lavr_dowhile_end");
 
+  break_stack_.push_back(end_lbl);
   emit_raw(body_lbl + ":");
   if (node.body) {
     node.body->accept(*this);
@@ -358,6 +365,83 @@ void AVRCodeGenerator::visit(const DoWhileNode &node) {
     emit_line("sbiw r24, 0");
     emit_line("brne " + body_lbl);
   }
+  break_stack_.pop_back();
+  emit_raw(end_lbl + ":");
+}
+
+void AVRCodeGenerator::visit(const SwitchNode &node) {
+  std::string end_lbl = new_label(".Lavr_switch_end");
+  std::string default_lbl = "";
+  int cond_offset = get_var_offset("@avr_switch_cond_" + std::to_string(label_counter_));
+
+  // 1. Evaluate switch condition into r24:r25 and save in frame slot
+  if (node.cond) {
+    node.cond->accept(*this);
+  }
+  emit_line("std Y+" + std::to_string(cond_offset - 1) + ", r24");
+  emit_line("std Y+" + std::to_string(cond_offset) + ", r25");
+
+  // 2. Generate case labels and comparison branches
+  std::vector<std::string> case_labels;
+  case_labels.reserve(node.cases.size());
+
+  for (size_t i = 0; i < node.cases.size(); ++i) {
+    const auto &c = node.cases[i];
+    if (c->is_default) {
+      std::string d_lbl = new_label(".Lavr_switch_default");
+      default_lbl = d_lbl;
+      case_labels.push_back(d_lbl);
+    } else {
+      std::string c_lbl = new_label(".Lavr_switch_case");
+      case_labels.push_back(c_lbl);
+
+      if (c->value) {
+        c->value->accept(*this);
+      }
+      emit_line("ldd r18, Y+" + std::to_string(cond_offset - 1));
+      emit_line("ldd r19, Y+" + std::to_string(cond_offset));
+      emit_line("cp r18, r24");
+      emit_line("cpc r19, r25");
+      emit_line("breq " + c_lbl);
+    }
+  }
+
+  // 3. Fallthrough to default or end
+  if (!default_lbl.empty()) {
+    emit_line("rjmp " + default_lbl);
+  } else {
+    emit_line("rjmp " + end_lbl);
+  }
+
+  // 4. Emit case bodies
+  break_stack_.push_back(end_lbl);
+
+  for (size_t i = 0; i < node.cases.size(); ++i) {
+    emit_raw(case_labels[i] + ":");
+    for (const auto &stmt : node.cases[i]->statements) {
+      if (stmt) {
+        stmt->accept(*this);
+      }
+    }
+  }
+
+  break_stack_.pop_back();
+  emit_raw(end_lbl + ":");
+}
+
+void AVRCodeGenerator::visit(const CaseNode &node) {
+  for (const auto &stmt : node.statements) {
+    if (stmt) {
+      stmt->accept(*this);
+    }
+  }
+}
+
+void AVRCodeGenerator::visit(const BreakNode &node) {
+  if (break_stack_.empty()) {
+    unsupported(node, "break statement outside of loop or switch");
+  }
+  emit_line("rjmp " + break_stack_.back());
 }
 
 void AVRCodeGenerator::visit(const ReturnNode &node) {

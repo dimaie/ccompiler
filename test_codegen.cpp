@@ -75,6 +75,28 @@ static void test_x86_64_codegen() {
     assert(loop_asm.find(".Lwhile_cond") != std::string::npos);
     assert(loop_asm.find(".Ldowhile_body") != std::string::npos);
   }
+
+  // Test switch-case
+  {
+    auto sw_prog = parse("int x = 2;\n"
+                         "int res = 0;\n"
+                         "switch (x) {\n"
+                         "  case 1:\n"
+                         "    res = 10;\n"
+                         "    break;\n"
+                         "  case 2:\n"
+                         "    res = 20;\n"
+                         "    break;\n"
+                         "  default:\n"
+                         "    res = -1;\n"
+                         "    break;\n"
+                         "}\n"
+                         "return res;\n");
+    std::string sw_asm = gen->generate_to_string(*sw_prog);
+    assert(sw_asm.find(".Lswitch_case") != std::string::npos);
+    assert(sw_asm.find(".Lswitch_default") != std::string::npos);
+    assert(sw_asm.find(".Lswitch_end") != std::string::npos);
+  }
 }
 
 static void test_arm64_codegen() {
@@ -115,6 +137,21 @@ static void test_arm64_codegen() {
     assert(loop_asm.find(".Larm_dowhile_body") != std::string::npos);
     assert(loop_asm.find("cbnz x0,") != std::string::npos);
   }
+
+  // Test switch-case
+  {
+    auto sw_prog = parse("int x = 1;\n"
+                         "switch (x) {\n"
+                         "  case 1:\n"
+                         "    return 100;\n"
+                         "  default:\n"
+                         "    return 0;\n"
+                         "}\n");
+    std::string sw_asm = gen->generate_to_string(*sw_prog);
+    assert(sw_asm.find(".Larm_switch_case") != std::string::npos);
+    assert(sw_asm.find(".Larm_switch_default") != std::string::npos);
+    assert(sw_asm.find(".Larm_switch_end") != std::string::npos);
+  }
 }
 
 static void test_avr_codegen() {
@@ -153,6 +190,21 @@ static void test_avr_codegen() {
     assert(loop_asm.find(".Lavr_dowhile_body") != std::string::npos);
     assert(loop_asm.find("brne .Lavr_dowhile_body") != std::string::npos);
   }
+
+  // Test switch-case
+  {
+    auto sw_prog = parse("int x = 1;\n"
+                         "switch (x) {\n"
+                         "  case 1:\n"
+                         "    return 100;\n"
+                         "  default:\n"
+                         "    return 0;\n"
+                         "}\n");
+    std::string sw_asm = gen->generate_to_string(*sw_prog);
+    assert(sw_asm.find(".Lavr_switch_case") != std::string::npos);
+    assert(sw_asm.find(".Lavr_switch_default") != std::string::npos);
+    assert(sw_asm.find(".Lavr_switch_end") != std::string::npos);
+  }
 }
 
 static void test_c_codegen() {
@@ -181,9 +233,27 @@ static void test_c_codegen() {
     assert(loop_c.find("do {") != std::string::npos);
     assert(loop_c.find("} while ((a > 0));") != std::string::npos);
   }
+
+  // Test switch-case
+  {
+    auto sw_prog = parse("int x = 2;\n"
+                         "switch (x) {\n"
+                         "  case 1:\n"
+                         "    return 10;\n"
+                         "  case 2:\n"
+                         "    return 20;\n"
+                         "  default:\n"
+                         "    return 0;\n"
+                         "}\n");
+    std::string sw_c = gen->generate_to_string(*sw_prog);
+    assert(sw_c.find("switch (x) {") != std::string::npos);
+    assert(sw_c.find("case 1:") != std::string::npos);
+    assert(sw_c.find("case 2:") != std::string::npos);
+    assert(sw_c.find("default:") != std::string::npos);
+  }
 }
 
-// Mock code generator that does NOT implement while or for loops
+// Mock code generator that does NOT implement while or for loops or switch
 class MockMinimalCodeGenerator : public ICodeGenerator {
 public:
   TargetArch get_arch() const override { return TargetArch::X86_64; }
@@ -203,7 +273,7 @@ public:
 static void test_unsupported_features() {
   std::cout << "Testing Unsupported Feature Error Handling...\n";
 
-  // 1. Unimplemented AST node in an unsupported generator requires zero code in the generator
+  // 1. Unimplemented AST node (while loop) in an unsupported generator
   {
     MockMinimalCodeGenerator mock_gen;
     auto prog = parse("while (1) { return 0; }\n");
@@ -218,6 +288,22 @@ static void test_unsupported_features() {
       assert(e.get_line() == 1);
       std::string msg = e.what();
       assert(msg.find("Feature 'while loop' is not supported by minimal_mock code generator (line 1)") != std::string::npos);
+    }
+    assert(threw);
+  }
+
+  // 2. Unimplemented AST node (switch statement) in an unsupported generator
+  {
+    MockMinimalCodeGenerator mock_gen;
+    auto prog = parse("switch (1) { case 1: break; }\n");
+
+    bool threw = false;
+    try {
+      mock_gen.generate_to_string(*prog);
+    } catch (const UnsupportedFeatureException &e) {
+      threw = true;
+      assert(e.get_feature() == "switch statement");
+      assert(e.get_arch() == "minimal_mock");
     }
     assert(threw);
   }

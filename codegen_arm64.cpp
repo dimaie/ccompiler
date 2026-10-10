@@ -30,6 +30,7 @@ void ARM64CodeGenerator::generate(const ProgramNode &program,
   var_offsets_.clear();
   current_offset_ = 8; // offset 0 and 8 reserved for saved x29, x30
   label_counter_ = 0;
+  break_stack_.clear();
 
   emit_raw("// ================================================================");
   emit_raw("// ARM64 (AArch64) Assembly for Raspberry Pi (ARMv8-A)");
@@ -255,9 +256,11 @@ void ARM64CodeGenerator::visit(const ForNode &node) {
     emit_line("cbz x0, " + end_lbl);
   }
 
+  break_stack_.push_back(end_lbl);
   if (node.body) {
     node.body->accept(*this);
   }
+  break_stack_.pop_back();
 
   emit_raw(step_lbl + ":");
   if (node.step) {
@@ -277,9 +280,11 @@ void ARM64CodeGenerator::visit(const WhileNode &node) {
     emit_line("cbz x0, " + end_lbl);
   }
 
+  break_stack_.push_back(end_lbl);
   if (node.body) {
     node.body->accept(*this);
   }
+  break_stack_.pop_back();
 
   emit_line("b " + cond_lbl);
   emit_raw(end_lbl + ":");
@@ -287,7 +292,9 @@ void ARM64CodeGenerator::visit(const WhileNode &node) {
 
 void ARM64CodeGenerator::visit(const DoWhileNode &node) {
   std::string body_lbl = new_label(".Larm_dowhile_body");
+  std::string end_lbl = new_label(".Larm_dowhile_end");
 
+  break_stack_.push_back(end_lbl);
   emit_raw(body_lbl + ":");
   if (node.body) {
     node.body->accept(*this);
@@ -297,6 +304,80 @@ void ARM64CodeGenerator::visit(const DoWhileNode &node) {
     node.cond->accept(*this);
     emit_line("cbnz x0, " + body_lbl);
   }
+  break_stack_.pop_back();
+  emit_raw(end_lbl + ":");
+}
+
+void ARM64CodeGenerator::visit(const SwitchNode &node) {
+  std::string end_lbl = new_label(".Larm_switch_end");
+  std::string default_lbl = "";
+  int cond_offset = get_var_offset("@arm_switch_cond_" + std::to_string(label_counter_));
+
+  // 1. Evaluate switch condition into x0 and save in frame slot
+  if (node.cond) {
+    node.cond->accept(*this);
+  }
+  emit_line("str x0, [x29, #" + std::to_string(cond_offset) + "]");
+
+  // 2. Generate case labels and comparison branches
+  std::vector<std::string> case_labels;
+  case_labels.reserve(node.cases.size());
+
+  for (size_t i = 0; i < node.cases.size(); ++i) {
+    const auto &c = node.cases[i];
+    if (c->is_default) {
+      std::string d_lbl = new_label(".Larm_switch_default");
+      default_lbl = d_lbl;
+      case_labels.push_back(d_lbl);
+    } else {
+      std::string c_lbl = new_label(".Larm_switch_case");
+      case_labels.push_back(c_lbl);
+
+      if (c->value) {
+        c->value->accept(*this);
+      }
+      emit_line("ldr x1, [x29, #" + std::to_string(cond_offset) + "]");
+      emit_line("cmp x1, x0");
+      emit_line("b.eq " + c_lbl);
+    }
+  }
+
+  // 3. Fallthrough to default or end
+  if (!default_lbl.empty()) {
+    emit_line("b " + default_lbl);
+  } else {
+    emit_line("b " + end_lbl);
+  }
+
+  // 4. Emit case bodies
+  break_stack_.push_back(end_lbl);
+
+  for (size_t i = 0; i < node.cases.size(); ++i) {
+    emit_raw(case_labels[i] + ":");
+    for (const auto &stmt : node.cases[i]->statements) {
+      if (stmt) {
+        stmt->accept(*this);
+      }
+    }
+  }
+
+  break_stack_.pop_back();
+  emit_raw(end_lbl + ":");
+}
+
+void ARM64CodeGenerator::visit(const CaseNode &node) {
+  for (const auto &stmt : node.statements) {
+    if (stmt) {
+      stmt->accept(*this);
+    }
+  }
+}
+
+void ARM64CodeGenerator::visit(const BreakNode &node) {
+  if (break_stack_.empty()) {
+    unsupported(node, "break statement outside of loop or switch");
+  }
+  emit_line("b " + break_stack_.back());
 }
 
 void ARM64CodeGenerator::visit(const ReturnNode &node) {

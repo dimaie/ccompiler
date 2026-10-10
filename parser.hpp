@@ -26,6 +26,8 @@ public:
   std::unique_ptr<ForNode> parse_for();
   std::unique_ptr<WhileNode> parse_while();
   std::unique_ptr<DoWhileNode> parse_do_while();
+  std::unique_ptr<SwitchNode> parse_switch();
+  std::unique_ptr<BreakNode> parse_break();
   std::unique_ptr<ReturnNode> parse_return();
   std::unique_ptr<CompoundNode> parse_compound_statement();
 
