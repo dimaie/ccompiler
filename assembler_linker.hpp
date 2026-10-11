@@ -29,6 +29,16 @@ public:
   virtual bool is_supported() const = 0;
   virtual void set_linker_config(const LinkerConfig &config) { (void)config; }
 
+  virtual AssemblerLinkerResult link_modules(
+      const std::vector<AssembledModule> &modules,
+      const std::string &output_filepath,
+      TargetFileType target_file_type = TargetFileType::Auto) = 0;
+
+  virtual AssemblerLinkerResult assemble_and_link_multiple(
+      const std::vector<std::string> &assembly_codes,
+      const std::string &output_filepath,
+      TargetFileType target_file_type = TargetFileType::Auto) = 0;
+
   virtual AssemblerLinkerResult assemble_and_link(
       const std::string &assembly_code,
       const std::string &output_filepath) = 0;
@@ -43,6 +53,16 @@ public:
   const char *get_arch_name() const override { return "x86_64"; }
   bool is_supported() const override { return true; }
   void set_linker_config(const LinkerConfig &config) override { config_ = config; }
+
+  AssemblerLinkerResult link_modules(
+      const std::vector<AssembledModule> &modules,
+      const std::string &output_filepath,
+      TargetFileType target_file_type = TargetFileType::Auto) override;
+
+  AssemblerLinkerResult assemble_and_link_multiple(
+      const std::vector<std::string> &assembly_codes,
+      const std::string &output_filepath,
+      TargetFileType target_file_type = TargetFileType::Auto) override;
 
   AssemblerLinkerResult assemble_and_link(
       const std::string &assembly_code,
@@ -64,6 +84,16 @@ public:
   TargetArch get_arch() const override { return arch_; }
   const char *get_arch_name() const override { return arch_name_.c_str(); }
   bool is_supported() const override { return false; }
+
+  AssemblerLinkerResult link_modules(
+      const std::vector<AssembledModule> &modules,
+      const std::string &output_filepath,
+      TargetFileType target_file_type = TargetFileType::Auto) override;
+
+  AssemblerLinkerResult assemble_and_link_multiple(
+      const std::vector<std::string> &assembly_codes,
+      const std::string &output_filepath,
+      TargetFileType target_file_type = TargetFileType::Auto) override;
 
   AssemblerLinkerResult assemble_and_link(
       const std::string &assembly_code,

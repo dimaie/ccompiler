@@ -25,6 +25,8 @@ struct AssembledModule {
   std::unordered_map<std::string, uint32_t> data_offsets;   // label in data_bytes
   std::vector<Relocation> relocations;
   std::set<std::string> external_symbols;
+  std::set<std::string> global_symbols;
+  std::set<std::string> local_symbols;
 };
 
 class X86_64InternalAssembler {

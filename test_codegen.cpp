@@ -1689,22 +1689,150 @@ static void test_command_line_parser() {
     assert(err.find("Unknown option '--unknown-flag'") != std::string::npos);
   }
 
-  // 7. Error handling: multiple input files
+  // 7. Multiple input files supported
   {
-    CompilerConfig cfg_err;
-    std::vector<std::string> args = {"file1.c", "file2.c"};
-    bool ok = parser.parse(args, cfg_err, err, help);
-    assert(!ok);
-    assert(err.find("Multiple input files specified") != std::string::npos);
+    CompilerConfig cfg_multi;
+    std::vector<std::string> args = {"file1.c", "file2.c", "file3.c"};
+    bool ok = parser.parse(args, cfg_multi, err, help);
+    assert(ok);
+    assert(cfg_multi.general.input_filenames.size() == 3);
+    assert(cfg_multi.general.input_filenames[0] == "file1.c");
+    assert(cfg_multi.general.input_filenames[1] == "file2.c");
+    assert(cfg_multi.general.input_filenames[2] == "file3.c");
+    assert(cfg_multi.general.input_filename == "file1.c");
   }
 
-  // 8. Error handling: no input file
+  // 8. Compile-only (-c) and target file type options
+  {
+    CompilerConfig cfg_c;
+    std::vector<std::string> args = {"-c", "--type=obj", "mod.c"};
+    bool ok = parser.parse(args, cfg_c, err, help);
+    assert(ok);
+    assert(cfg_c.general.stop_phase == StopPhase::CompileOnly);
+    assert(cfg_c.general.target_file_type == TargetFileType::ObjectFile);
+  }
+
+  // 9. Error handling: no input file
   {
     CompilerConfig cfg_err;
     std::vector<std::string> args = {"-t", "x86_64"};
     bool ok = parser.parse(args, cfg_err, err, help);
     assert(!ok);
     assert(err.find("No input file specified") != std::string::npos);
+  }
+}
+
+static void test_multi_module_compilation_and_linking() {
+  std::cout << "Testing Multi-Module Compilation and Embedded Linking...\n";
+
+  auto x86_linker = AssemblerLinkerFactory::create(TargetArch::X86_64);
+  assert(x86_linker != nullptr);
+
+  // 1. Link two modules together and verify execution:
+  //    Module A defines add(a, b)
+  //    Module B defines main() calling add(15, 27) -> returns 42
+  {
+    auto gen = CodeGeneratorFactory::create("x86_64");
+
+    auto prog_a = parse("int add(int a, int b) {\n"
+                        "  return a + b;\n"
+                        "}\n");
+    std::string asm_a = gen->generate_to_string(*prog_a);
+
+    auto prog_b = parse("int add(int a, int b);\n"
+                        "int main() {\n"
+                        "  return add(15, 27);\n"
+                        "}\n");
+    std::string asm_b = gen->generate_to_string(*prog_b);
+
+    std::string exe_path = "test_multi_module.exe";
+    auto res = x86_linker->assemble_and_link_multiple({asm_a, asm_b}, exe_path);
+    assert(res.success);
+    assert(std::filesystem::exists(exe_path));
+
+    int code = std::system(".\\test_multi_module.exe");
+    assert(code == 42);
+
+    std::error_code ec;
+    std::filesystem::remove(exe_path, ec);
+  }
+
+  // 2. Target type identification depending on presence of 'main'
+  {
+    X86_64InternalAssembler asm_obj;
+
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog1 = parse("int helper1() { return 1; }\n");
+    auto prog2 = parse("int helper2() { return 2; }\n");
+    std::string s1 = gen->generate_to_string(*prog1);
+    std::string s2 = gen->generate_to_string(*prog2);
+
+    std::vector<AssembledModule> modules;
+    modules.push_back(asm_obj.assemble(s1));
+    modules.push_back(asm_obj.assemble(s2));
+
+    // Neither has 'main' -> Target type is ObjectFile
+    TargetFileType type_no_main = InternalPELinker::identify_target_type(modules);
+    assert(type_no_main == TargetFileType::ObjectFile);
+
+    // Linking without 'main' should fail gracefully with descriptive error
+    std::string err;
+    bool ok = InternalPELinker::link(modules, "invalid.exe", err);
+    assert(!ok);
+    assert(err.find("no 'main' entry point function found") != std::string::npos);
+
+    // Add module with 'main' -> Target type is Executable
+    auto prog_main = parse("int main() { return 0; }\n");
+    modules.push_back(asm_obj.assemble(gen->generate_to_string(*prog_main)));
+    TargetFileType type_with_main = InternalPELinker::identify_target_type(modules);
+    assert(type_with_main == TargetFileType::Executable);
+  }
+
+  // 3. Static functions across modules: internal linkage, NO duplicate symbol errors
+  {
+    auto gen = CodeGeneratorFactory::create("x86_64");
+
+    // Module 1 defines a static helper returning 10
+    auto prog_1 = parse("static int helper() { return 10; }\n"
+                        "int get_a() { return helper(); }\n");
+    std::string asm_1 = gen->generate_to_string(*prog_1);
+
+    // Module 2 defines a static helper returning 25
+    auto prog_2 = parse("static int helper() { return 25; }\n"
+                        "int get_b() { return helper(); }\n"
+                        "int get_a();\n"
+                        "int main() {\n"
+                        "  return get_a() + get_b();\n" // 10 + 25 = 35
+                        "}\n");
+    std::string asm_2 = gen->generate_to_string(*prog_2);
+
+    std::string exe_path = "test_static_linkage.exe";
+    auto res = x86_linker->assemble_and_link_multiple({asm_1, asm_2}, exe_path);
+    assert(res.success);
+    assert(std::filesystem::exists(exe_path));
+
+    int code = std::system(".\\test_static_linkage.exe");
+    assert(code == 35);
+
+    std::error_code ec;
+    std::filesystem::remove(exe_path, ec);
+  }
+
+  // 4. Duplicate global symbol detection:
+  //    Two modules defining the same non-static function must produce an error
+  {
+    auto gen = CodeGeneratorFactory::create("x86_64");
+
+    auto prog_dup1 = parse("int conflict() { return 1; }\n");
+    auto prog_dup2 = parse("int conflict() { return 2; }\n"
+                           "int main() { return conflict(); }\n");
+    std::string asm_dup1 = gen->generate_to_string(*prog_dup1);
+    std::string asm_dup2 = gen->generate_to_string(*prog_dup2);
+
+    std::string exe_path = "test_dup.exe";
+    auto res = x86_linker->assemble_and_link_multiple({asm_dup1, asm_dup2}, exe_path);
+    assert(!res.success);
+    assert(res.message.find("multiple definition of symbol 'conflict'") != std::string::npos);
   }
 }
 
@@ -1733,9 +1861,10 @@ int main() {
   test_calling_conventions_codegen();
   test_local_var_storage_options();
   test_command_line_parser();
+  test_multi_module_compilation_and_linking();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL CODEGEN TESTS PASSED! (20/20)\n";
+  std::cout << "  ALL CODEGEN TESTS PASSED! (21/21)\n";
   std::cout << "========================================\n";
   return 0;
 }

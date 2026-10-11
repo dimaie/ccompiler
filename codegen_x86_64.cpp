@@ -428,7 +428,11 @@ void X86_64CodeGenerator::visit(const FuncDefNode &node) {
 
   int frame_size = (current_offset_ + 16 > 128) ? ((current_offset_ + 16 + 15) & ~15) : 128;
 
-  emit_raw(".globl " + node.name);
+  if (node.is_static) {
+    emit_raw(".local " + node.name);
+  } else {
+    emit_raw(".globl " + node.name);
+  }
   emit_raw(node.name + ":");
   emit_line("pushq %rbp");
   emit_line("movq %rsp, %rbp");

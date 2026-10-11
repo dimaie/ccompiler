@@ -318,10 +318,131 @@ bool InternalPELinker::read_coff_archive(const std::string &lib_path,
   return true;
 }
 
-bool InternalPELinker::link(AssembledModule module,
+TargetFileType InternalPELinker::identify_target_type(const std::vector<AssembledModule> &modules) {
+  for (const auto &m : modules) {
+    if (m.symbol_offsets.find("main") != m.symbol_offsets.end()) {
+      return TargetFileType::Executable;
+    }
+  }
+  return TargetFileType::ObjectFile;
+}
+
+bool InternalPELinker::link(const std::vector<AssembledModule> &modules,
                             const std::string &output_filepath,
                             std::string &error_msg,
-                            const LinkerConfig &config) {
+                            const LinkerConfig &config,
+                            TargetFileType target_file_type) {
+  if (modules.empty()) {
+    error_msg = "Linker error: no modules provided to link";
+    return false;
+  }
+
+  TargetFileType resolved_type = target_file_type;
+  if (resolved_type == TargetFileType::Auto) {
+    resolved_type = identify_target_type(modules);
+  }
+
+  if (resolved_type == TargetFileType::ObjectFile) {
+    error_msg = "Target file type identified as ObjectFile (no 'main' entry point function found). Cannot produce standalone executable.";
+    return false;
+  }
+
+  AssembledModule module;
+  struct ModulePlacement {
+    size_t text_offset{0};
+    size_t data_offset{0};
+  };
+  std::vector<ModulePlacement> placements(modules.size());
+
+  for (size_t i = 0; i < modules.size(); ++i) {
+    const auto &m = modules[i];
+
+    // Align text section to 16 bytes
+    while (module.text_bytes.size() % 16 != 0) {
+      module.text_bytes.push_back(0x90); // nop
+    }
+    placements[i].text_offset = module.text_bytes.size();
+
+    // Align data section to 16 bytes
+    while (module.data_bytes.size() % 16 != 0) {
+      module.data_bytes.push_back(0x00);
+    }
+    placements[i].data_offset = module.data_bytes.size();
+
+    // Append bytes
+    module.text_bytes.insert(module.text_bytes.end(), m.text_bytes.begin(), m.text_bytes.end());
+    module.data_bytes.insert(module.data_bytes.end(), m.data_bytes.begin(), m.data_bytes.end());
+
+    auto is_global = [&](const std::string &name) -> bool {
+      if (m.local_symbols.count(name)) return false;
+      if (m.global_symbols.count(name)) return true;
+      if (!m.global_symbols.empty()) return false;
+      return !name.empty() && name[0] != '.';
+    };
+
+    // Register text symbols
+    for (const auto &pair : m.symbol_offsets) {
+      const std::string &name = pair.first;
+      uint32_t off = pair.second;
+      if (is_global(name)) {
+        if (module.symbol_offsets.find(name) != module.symbol_offsets.end()) {
+          error_msg = "Linker error: multiple definition of symbol '" + name + "'";
+          return false;
+        }
+        module.symbol_offsets[name] = static_cast<uint32_t>(placements[i].text_offset + off);
+        module.global_symbols.insert(name);
+      } else {
+        std::string scoped = name + "@mod" + std::to_string(i);
+        module.symbol_offsets[scoped] = static_cast<uint32_t>(placements[i].text_offset + off);
+      }
+    }
+
+    // Register data symbols
+    for (const auto &pair : m.data_offsets) {
+      const std::string &name = pair.first;
+      uint32_t off = pair.second;
+      if (is_global(name)) {
+        if (module.data_offsets.find(name) != module.data_offsets.end()) {
+          error_msg = "Linker error: multiple definition of data symbol '" + name + "'";
+          return false;
+        }
+        module.data_offsets[name] = static_cast<uint32_t>(placements[i].data_offset + off);
+      } else {
+        std::string scoped = name + "@mod" + std::to_string(i);
+        module.data_offsets[scoped] = static_cast<uint32_t>(placements[i].data_offset + off);
+      }
+    }
+
+    // Map relocations
+    for (const auto &reloc : m.relocations) {
+      Relocation r = reloc;
+      r.text_offset = placements[i].text_offset + reloc.text_offset;
+      bool is_local_to_m = (m.symbol_offsets.find(reloc.symbol) != m.symbol_offsets.end() ||
+                            m.data_offsets.find(reloc.symbol) != m.data_offsets.end()) &&
+                           !is_global(reloc.symbol);
+      if (is_local_to_m) {
+        r.symbol = reloc.symbol + "@mod" + std::to_string(i);
+      }
+      module.relocations.push_back(r);
+    }
+  }
+
+  // Identify external symbols
+  for (const auto &m : modules) {
+    for (const auto &ext : m.external_symbols) {
+      if (module.symbol_offsets.find(ext) == module.symbol_offsets.end() &&
+          module.data_offsets.find(ext) == module.data_offsets.end()) {
+        module.external_symbols.insert(ext);
+      }
+    }
+  }
+  for (const auto &reloc : module.relocations) {
+    if (module.symbol_offsets.find(reloc.symbol) == module.symbol_offsets.end() &&
+        module.data_offsets.find(reloc.symbol) == module.data_offsets.end()) {
+      module.external_symbols.insert(reloc.symbol);
+    }
+  }
+
   // Ensure main exists
   if (module.symbol_offsets.find("main") == module.symbol_offsets.end()) {
     error_msg = "Linker error: undefined symbol 'main'";

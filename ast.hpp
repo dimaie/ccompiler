@@ -346,15 +346,17 @@ public:
   std::unique_ptr<CompoundNode> body;
   std::string return_struct_name;
   CallingConvention calling_convention{CallingConvention::Default};
+  bool is_static{false};
 
   FuncDefNode(int line, DataType return_type, std::string name,
               std::vector<Param> params, std::unique_ptr<CompoundNode> body,
               int return_pointer_level = 0,
-              CallingConvention calling_convention = CallingConvention::Default)
+              CallingConvention calling_convention = CallingConvention::Default,
+              bool is_static = false)
       : ASTNode(line), return_type(return_type),
         return_pointer_level(return_pointer_level), name(std::move(name)),
         params(std::move(params)), body(std::move(body)),
-        calling_convention(calling_convention) {}
+        calling_convention(calling_convention), is_static(is_static) {}
 
   ASTNodeType getType() const override { return ASTNodeType::FuncDef; }
   void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }

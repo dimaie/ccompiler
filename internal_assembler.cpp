@@ -130,7 +130,21 @@ AssembledModule X86_64InternalAssembler::assemble(const std::string &assembly_so
       std::istringstream ls(line);
       std::string dir;
       ls >> dir;
-      if (dir == ".text") {
+      if (dir == ".globl" || dir == ".global") {
+        std::string sym;
+        ls >> sym;
+        if (!sym.empty()) {
+          module.global_symbols.insert(sym);
+        }
+        continue;
+      } else if (dir == ".local") {
+        std::string sym;
+        ls >> sym;
+        if (!sym.empty()) {
+          module.local_symbols.insert(sym);
+        }
+        continue;
+      } else if (dir == ".text") {
         current_sec = SecText;
       } else if (dir == ".section") {
         std::string sec_name;

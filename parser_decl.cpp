@@ -119,9 +119,15 @@ std::unique_ptr<VarDeclNode> Parser::parse_func_ptr_decl(DataType return_type, C
 }
 
 std::unique_ptr<ASTNode> Parser::parse_declaration() {
+  bool is_static = match(TOK_KW_STATIC);
+  bool is_extern = match(TOK_KW_EXTERN);
+  (void)is_extern;
   CallingConvention cc = CallingConvention::Default;
   if (is_calling_convention(peek().type)) {
     cc = parse_calling_convention();
+  }
+  if (!is_static && peek().type == TOK_KW_STATIC) {
+    is_static = match(TOK_KW_STATIC);
   }
   if (peek().type == TOK_KW_STRUCT || peek().type == TOK_KW_UNION) {
     return parse_struct_or_union_decl();
@@ -145,7 +151,7 @@ std::unique_ptr<ASTNode> Parser::parse_declaration() {
   }
   Token id_tok = expect(TOK_IDENTIFIER, "Expected identifier after type specifier");
   if (peek().type == TOK_LPAREN) {
-    return parse_function_def(type, id_tok, pointer_level, cc);
+    return parse_function_def(type, id_tok, pointer_level, cc, is_static);
   }
   if (type == DataType::Void && pointer_level == 0) {
     parse_error(id_tok, "Variable cannot have type 'void'");
@@ -230,7 +236,7 @@ std::unique_ptr<ASTNode> Parser::parse_struct_or_union_decl() {
 }
 
 std::unique_ptr<FuncDefNode>
-Parser::parse_function_def(DataType return_type, const Token &id_tok, int return_pointer_level, CallingConvention calling_convention) {
+Parser::parse_function_def(DataType return_type, const Token &id_tok, int return_pointer_level, CallingConvention calling_convention, bool is_static) {
   expect(TOK_LPAREN, "Expected '(' after function name");
   std::vector<Param> params;
   if (peek().type != TOK_RPAREN) {
@@ -321,12 +327,14 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
   if (match(TOK_SEMICOLON)) {
     return std::make_unique<FuncDefNode>(id_tok.line, return_type, id_tok.text,
                                          std::move(params), nullptr,
-                                         return_pointer_level, calling_convention);
+                                         return_pointer_level, calling_convention,
+                                         is_static);
   }
   auto body = parse_compound_statement();
   return std::make_unique<FuncDefNode>(id_tok.line, return_type, id_tok.text,
                                        std::move(params), std::move(body),
-                                       return_pointer_level, calling_convention);
+                                       return_pointer_level, calling_convention,
+                                       is_static);
 }
 
 std::unique_ptr<VarDeclNode>

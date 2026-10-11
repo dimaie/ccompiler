@@ -6,14 +6,25 @@
 void CompilerConfig::print(std::ostream &out) const {
   out << "=== Compiler Configuration ===\n";
   out << "[General]\n";
-  out << "  Input File:     " << (general.input_filename.empty() ? "(none)" : general.input_filename) << "\n";
+  out << "  Input Files:    ";
+  if (general.input_filenames.empty()) {
+    out << (general.input_filename.empty() ? "(none)" : general.input_filename) << "\n";
+  } else {
+    for (size_t i = 0; i < general.input_filenames.size(); ++i) {
+      if (i > 0) out << ", ";
+      out << general.input_filenames[i];
+    }
+    out << "\n";
+  }
   out << "  Output File:    " << (general.output_filename.empty() ? "(default)" : general.output_filename) << "\n";
   out << "  Target:         " << general.target << "\n";
+  out << "  Target Type:    " << target_file_type_str(general.target_file_type) << "\n";
   out << "  Stop Phase:     ";
   switch (general.stop_phase) {
   case StopPhase::FullBuild: out << "FullBuild\n"; break;
   case StopPhase::PreprocessOnly: out << "PreprocessOnly (-E)\n"; break;
   case StopPhase::AssembleOnly: out << "AssembleOnly (-S)\n"; break;
+  case StopPhase::CompileOnly: out << "CompileOnly (-c)\n"; break;
   }
   out << "  Show AST:       " << (general.show_ast ? "true" : "false") << "\n";
   out << "  Verbose:        " << (general.verbose ? "true" : "false") << "\n";
@@ -104,13 +115,16 @@ void CompilerConfig::print(std::ostream &out) const {
 }
 
 void CommandLineParser::print_usage(const char *prog_name, std::ostream &out) {
-  out << "Usage: " << prog_name << " [options] <source_file> [libraries...]\n\n"
+  out << "Usage: " << prog_name << " [options] <source_files...> [libraries...]\n\n"
       << "Options:\n"
       << "  -t, --target <arch>    Target architecture (x86_64, arm64, avr, c) [default: x86_64]\n"
+      << "  --type <type>          Target file type (auto, exe, obj, shared) [default: auto]\n"
       << "  --local-vars <mode>    Local variable storage (stack, memory) [default: memory for avr, stack for others]\n"
       << "  -o, --output <file>    Output file [default: a.exe (Windows) / a.out]\n"
+      << "  -c                     Compile and assemble only; do not link\n"
       << "  -S                     Stop after compilation phase; output assembly code\n"
       << "  -E                     Stop after preprocessing phase; output preprocessed source\n"
+      << "  -shared                Produce shared library / DLL\n"
       << "  -v, --verbose          Verbose output; display compiler configuration before execution\n"
       << "  -I <dir>               Add directory to include search path\n"
       << "  -D <macro>[=val]       Define preprocessor macro\n"
@@ -216,12 +230,39 @@ bool CommandLineParser::parse(const std::vector<std::string> &args, CompilerConf
       config.general.stop_phase = StopPhase::PreprocessOnly;
       continue;
     }
+    if (arg == "-c") {
+      config.general.stop_phase = StopPhase::CompileOnly;
+      config.general.target_file_type = TargetFileType::ObjectFile;
+      continue;
+    }
+    if (arg == "-shared") {
+      config.general.target_file_type = TargetFileType::SharedLib;
+      continue;
+    }
 
     std::string val;
     std::string err;
 
+    // Target type: --type=..., --type <type>
+    MatchResult res = match_option(arg, "", "--type", false, args, i, val, err);
+    if (res == MatchResult::MissingValue) {
+      error_message = err;
+      return false;
+    }
+    if (res == MatchResult::Success) {
+      if (val == "exe" || val == "executable") config.general.target_file_type = TargetFileType::Executable;
+      else if (val == "obj" || val == "object") config.general.target_file_type = TargetFileType::ObjectFile;
+      else if (val == "dll" || val == "shared") config.general.target_file_type = TargetFileType::SharedLib;
+      else if (val == "auto") config.general.target_file_type = TargetFileType::Auto;
+      else {
+        error_message = "Unknown target file type '" + val + "'. Valid types: auto, exe, obj, shared";
+        return false;
+      }
+      continue;
+    }
+
     // Target: -t, -t=..., --target, --target=...
-    MatchResult res = match_option(arg, "-t", "--target", false, args, i, val, err);
+    res = match_option(arg, "-t", "--target", false, args, i, val, err);
     if (res == MatchResult::MissingValue) {
       error_message = err;
       return false;
@@ -336,11 +377,7 @@ bool CommandLineParser::parse(const std::vector<std::string> &args, CompilerConf
 
     // Stdin
     if (arg == "-") {
-      if (!config.general.input_filename.empty()) {
-        error_message = "Multiple input files specified ('" + config.general.input_filename + "' and '-')";
-        return false;
-      }
-      config.general.input_filename = "-";
+      config.general.input_filenames.push_back("-");
       continue;
     }
 
@@ -355,11 +392,7 @@ bool CommandLineParser::parse(const std::vector<std::string> &args, CompilerConf
       } else if (lower.size() > 4 && lower.substr(lower.size() - 4) == ".dll") {
         config.linker.explicit_dlls.push_back(arg);
       } else {
-        if (!config.general.input_filename.empty()) {
-          error_message = "Multiple input files specified ('" + config.general.input_filename + "' and '" + arg + "')";
-          return false;
-        }
-        config.general.input_filename = arg;
+        config.general.input_filenames.push_back(arg);
       }
       continue;
     }
@@ -369,10 +402,11 @@ bool CommandLineParser::parse(const std::vector<std::string> &args, CompilerConf
     return false;
   }
 
-  if (config.general.input_filename.empty()) {
+  if (config.general.input_filenames.empty()) {
     error_message = "No input file specified.";
     return false;
   }
+  config.general.input_filename = config.general.input_filenames[0];
 
   return true;
 }

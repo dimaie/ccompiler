@@ -5,30 +5,41 @@
 #include <fstream>
 #include <sstream>
 
-AssemblerLinkerResult X86_64AssemblerLinker::assemble_and_link(
-    const std::string &assembly_code,
-    const std::string &output_filepath) {
+AssemblerLinkerResult X86_64AssemblerLinker::link_modules(
+    const std::vector<AssembledModule> &modules,
+    const std::string &output_filepath,
+    TargetFileType target_file_type) {
   AssemblerLinkerResult result;
+  std::string error_msg;
+  bool success = InternalPELinker::link(modules, output_filepath, error_msg, config_, target_file_type);
+  if (!success) {
+    result.success = false;
+    result.exit_code = 1;
+    result.message = "Internal linker error: " + error_msg;
+    return result;
+  }
 
+  result.success = true;
+  result.exit_code = 0;
+  result.output_path = output_filepath;
+  result.message = "Successfully assembled and linked executable using embedded toolchain.";
+  return result;
+}
+
+AssemblerLinkerResult X86_64AssemblerLinker::assemble_and_link_multiple(
+    const std::vector<std::string> &assembly_codes,
+    const std::string &output_filepath,
+    TargetFileType target_file_type) {
   try {
     X86_64InternalAssembler internal_assembler;
-    AssembledModule module = internal_assembler.assemble(assembly_code);
-
-    std::string error_msg;
-    bool success = InternalPELinker::link(std::move(module), output_filepath, error_msg, config_);
-    if (!success) {
-      result.success = false;
-      result.exit_code = 1;
-      result.message = "Internal linker error: " + error_msg;
-      return result;
+    std::vector<AssembledModule> modules;
+    modules.reserve(assembly_codes.size());
+    for (const auto &asm_code : assembly_codes) {
+      modules.push_back(internal_assembler.assemble(asm_code));
     }
-
-    result.success = true;
-    result.exit_code = 0;
-    result.output_path = output_filepath;
-    result.message = "Successfully assembled and linked executable using embedded toolchain.";
-    return result;
+    return link_modules(modules, output_filepath, target_file_type);
   } catch (const std::exception &e) {
+    AssemblerLinkerResult result;
     result.success = false;
     result.exit_code = 1;
     result.message = std::string("Internal assembler error: ") + e.what();
@@ -36,23 +47,51 @@ AssemblerLinkerResult X86_64AssemblerLinker::assemble_and_link(
   }
 }
 
-AssemblerLinkerResult StubAssemblerLinker::assemble_and_link(
+AssemblerLinkerResult X86_64AssemblerLinker::assemble_and_link(
     const std::string &assembly_code,
     const std::string &output_filepath) {
+  return assemble_and_link_multiple({assembly_code}, output_filepath, TargetFileType::Auto);
+}
+
+AssemblerLinkerResult StubAssemblerLinker::link_modules(
+    const std::vector<AssembledModule> &/*modules*/,
+    const std::string &/*output_filepath*/,
+    TargetFileType /*target_file_type*/) {
+  AssemblerLinkerResult result;
+  result.success = false;
+  result.exit_code = 1;
+  result.message = "Notice: Assembler and linker features are not yet available for target '" +
+                   arch_name_ + "'. Compilation stopped at assembly phase.";
+  return result;
+}
+
+AssemblerLinkerResult StubAssemblerLinker::assemble_and_link_multiple(
+    const std::vector<std::string> &assembly_codes,
+    const std::string &output_filepath,
+    TargetFileType /*target_file_type*/) {
   AssemblerLinkerResult result;
   result.success = false;
   result.exit_code = 1;
   result.message = "Notice: Assembler and linker features are not yet available for target '" +
                    arch_name_ + "'. Compilation stopped at assembly phase.";
 
-  // Save the generated assembly code to output_filepath so the phase completes
-  std::ofstream out(output_filepath);
-  if (out.is_open()) {
-    out << assembly_code;
-    result.output_path = output_filepath;
+  if (!assembly_codes.empty()) {
+    std::ofstream out(output_filepath);
+    if (out.is_open()) {
+      for (const auto &c : assembly_codes) {
+        out << c << "\n";
+      }
+      result.output_path = output_filepath;
+    }
   }
 
   return result;
+}
+
+AssemblerLinkerResult StubAssemblerLinker::assemble_and_link(
+    const std::string &assembly_code,
+    const std::string &output_filepath) {
+  return assemble_and_link_multiple({assembly_code}, output_filepath, TargetFileType::Auto);
 }
 
 std::unique_ptr<IAssemblerLinker>

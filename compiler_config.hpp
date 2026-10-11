@@ -10,14 +10,17 @@
 enum class StopPhase {
   FullBuild,
   PreprocessOnly,
-  AssembleOnly
+  AssembleOnly,
+  CompileOnly
 };
 
 struct GeneralConfig {
+  std::vector<std::string> input_filenames;
   std::string input_filename;
   std::string output_filename;
   std::string target{"x86_64"};
   StopPhase stop_phase{StopPhase::FullBuild};
+  TargetFileType target_file_type{TargetFileType::Auto};
   bool show_ast{false};
   bool verbose{false};
 };

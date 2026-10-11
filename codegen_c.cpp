@@ -113,6 +113,9 @@ void CCodeGenerator::visit(const ProgramNode &node) {
 }
 
 void CCodeGenerator::visit(const FuncDefNode &node) {
+  if (node.is_static) {
+    *out_ << "static ";
+  }
   if (node.calling_convention != CallingConvention::Default) {
     *out_ << calling_convention_str(node.calling_convention) << " ";
   }
