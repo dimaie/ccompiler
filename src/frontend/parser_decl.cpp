@@ -110,6 +110,7 @@ std::unique_ptr<VarDeclNode> Parser::parse_func_ptr_decl(DataType return_type, C
   }
   expect(TOK_SEMICOLON, "Expected ';' after function pointer declaration");
   auto node = std::make_unique<VarDeclNode>(id_tok.line, return_type, id_tok.text, std::move(init));
+  node->file_id = id_tok.file_id;
   node->is_func_ptr = true;
   node->pointer_level = ptr_level;
   node->func_ptr_ret_type = return_type;
@@ -202,7 +203,9 @@ std::unique_ptr<ASTNode> Parser::parse_struct_or_union_decl() {
     expect(TOK_RBRACE, "Expected '}' after struct/union body");
 
     if (match(TOK_SEMICOLON)) {
-      return std::make_unique<StructDefNode>(kw_tok.line, is_union, tag, std::move(members));
+      auto s = std::make_unique<StructDefNode>(kw_tok.line, is_union, tag, std::move(members));
+      s->file_id = kw_tok.file_id;
+      return s;
     }
 
     int ptr_level = 0;
@@ -212,7 +215,9 @@ std::unique_ptr<ASTNode> Parser::parse_struct_or_union_decl() {
     Token id_tok = expect(TOK_IDENTIFIER, "Expected variable name after struct/union definition");
     auto var_decl = parse_var_decl_after_id(is_union ? DataType::Union : DataType::Struct, id_tok, ptr_level);
     var_decl->struct_name = tag;
-    return std::make_unique<StructDefNode>(kw_tok.line, is_union, tag, std::move(members), std::move(var_decl));
+    auto s = std::make_unique<StructDefNode>(kw_tok.line, is_union, tag, std::move(members), std::move(var_decl));
+    s->file_id = kw_tok.file_id;
+    return s;
   }
 
   if (tag.empty()) {
@@ -325,16 +330,20 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
     calling_convention = parse_calling_convention();
   }
   if (match(TOK_SEMICOLON)) {
-    return std::make_unique<FuncDefNode>(id_tok.line, return_type, id_tok.text,
+    auto func = std::make_unique<FuncDefNode>(id_tok.line, return_type, id_tok.text,
                                          std::move(params), nullptr,
                                          return_pointer_level, calling_convention,
                                          is_static);
+    func->file_id = id_tok.file_id;
+    return func;
   }
   auto body = parse_compound_statement();
-  return std::make_unique<FuncDefNode>(id_tok.line, return_type, id_tok.text,
+  auto func = std::make_unique<FuncDefNode>(id_tok.line, return_type, id_tok.text,
                                        std::move(params), std::move(body),
                                        return_pointer_level, calling_convention,
                                        is_static);
+  func->file_id = id_tok.file_id;
+  return func;
 }
 
 std::unique_ptr<VarDeclNode>
@@ -403,11 +412,14 @@ Parser::parse_var_decl_after_id(DataType type, const Token &id_tok, int pointer_
   if (is_array) {
     auto node = std::make_unique<VarDeclNode>(id_tok.line, type, id_tok.text,
                                               array_size, std::move(init));
+    node->file_id = id_tok.file_id;
     node->pointer_level = pointer_level;
     return node;
   }
-  return std::make_unique<VarDeclNode>(id_tok.line, type, pointer_level, id_tok.text,
+  auto node = std::make_unique<VarDeclNode>(id_tok.line, type, pointer_level, id_tok.text,
                                        std::move(init));
+  node->file_id = id_tok.file_id;
+  return node;
 }
 
 std::unique_ptr<VarDeclNode> Parser::parse_var_decl() {

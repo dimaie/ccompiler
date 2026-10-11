@@ -98,11 +98,12 @@ private:
   std::unordered_set<std::string> defined_symbols_;
   int var_sym_counter_{0};
   int last_emitted_line_{0};
+  int last_emitted_file_id_{0};
 
   std::string new_label(const std::string &prefix);
   void emit_line(const std::string &inst);
   void emit_raw(const std::string &line);
-  void emit_loc(int line);
+  void emit_loc(int line, int file_id = 1);
   int get_var_offset(const std::string &name);
   std::string alloc_memory_var(const std::string &name, int size);
   std::string get_var_symbol(const std::string &name);

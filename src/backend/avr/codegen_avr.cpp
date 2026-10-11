@@ -13,10 +13,12 @@ void AVRCodeGenerator::emit_raw(const std::string &line) {
   *out_ << line << "\n";
 }
 
-void AVRCodeGenerator::emit_loc(int line) {
-  if (options_.emit_debug_info && line > 0 && line != last_emitted_line_) {
-    *out_ << "    .loc 1 " << line << " 0\n";
+void AVRCodeGenerator::emit_loc(int line, int file_id) {
+  int fid = (file_id > 0) ? file_id : 1;
+  if (options_.emit_debug_info && line > 0 && (line != last_emitted_line_ || fid != last_emitted_file_id_)) {
+    *out_ << "    .loc " << fid << " " << line << " 0\n";
     last_emitted_line_ = line;
+    last_emitted_file_id_ = fid;
   }
 }
 
@@ -149,12 +151,21 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
   label_counter_ = 0;
   break_stack_.clear();
   continue_stack_.clear();
-  current_func_name_ = "main";
   last_emitted_line_ = 0;
+  last_emitted_file_id_ = 0;
 
   if (options_.emit_debug_info) {
-    std::string filename = options_.source_filename.empty() ? "input.c" : options_.source_filename;
-    emit_raw("    .file 1 \"" + filename + "\"");
+    if (!program.file_table.empty()) {
+      for (size_t i = 0; i < program.file_table.size(); ++i) {
+        std::string f = program.file_table[i];
+        for (char &c : f) { if (c == '\\') c = '/'; }
+        emit_raw("    .file " + std::to_string(i + 1) + " \"" + f + "\"");
+      }
+    } else {
+      std::string filename = options_.source_filename.empty() ? "input.c" : options_.source_filename;
+      for (char &c : filename) { if (c == '\\') c = '/'; }
+      emit_raw("    .file 1 \"" + filename + "\"");
+    }
   }
 
   for (const auto &stmt : program.statements) {
@@ -215,7 +226,9 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
       emit_line("out 0x3f, r0        ; restore SREG");
       emit_line("out 0x3d, r28       ; update SPL");
     }
-    emit_loc(1);
+    int fid = (!program.statements.empty() && program.statements[0]) ? program.statements[0]->file_id : 1;
+    int ln = (!program.statements.empty() && program.statements[0]) ? program.statements[0]->line : 1;
+    emit_loc(ln, fid);
 
     program.accept(*this);
 
@@ -270,7 +283,9 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
         emit_line("out 0x3f, r0        ; restore SREG");
         emit_line("out 0x3d, r28       ; update SPL");
       }
-      emit_loc(1);
+      int fid = (!non_func_stmts.empty() && non_func_stmts[0]) ? non_func_stmts[0]->file_id : 1;
+      int ln = (!non_func_stmts.empty() && non_func_stmts[0]) ? non_func_stmts[0]->line : 1;
+      emit_loc(ln, fid);
 
       for (const auto *stmt : non_func_stmts) {
         stmt->accept(*this);
@@ -342,7 +357,7 @@ void AVRCodeGenerator::visit(const FuncDefNode &node) {
     emit_line("out 0x3f, r0        ; restore SREG");
     emit_line("out 0x3d, r28       ; update SPL");
   }
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
 
   static const std::pair<const char *, const char *> ARG_REGS[] = {
       {"r24", "r25"}, {"r22", "r23"}, {"r20", "r21"}, {"r18", "r19"}};
@@ -393,7 +408,7 @@ void AVRCodeGenerator::visit(const FuncDefNode &node) {
 }
 
 void AVRCodeGenerator::visit(const CallNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   if (node.args.size() > 4) {
     unsupported(node, "more than 4 function call arguments on AVR");
   }
@@ -452,7 +467,7 @@ void AVRCodeGenerator::visit(const CallNode &node) {
 void AVRCodeGenerator::visit(const ProgramNode &node) {
   for (const auto &stmt : node.statements) {
     if (stmt) {
-      emit_loc(stmt->line);
+      emit_loc(stmt->line, stmt->file_id);
       stmt->accept(*this);
     }
   }
@@ -461,14 +476,14 @@ void AVRCodeGenerator::visit(const ProgramNode &node) {
 void AVRCodeGenerator::visit(const CompoundNode &node) {
   for (const auto &stmt : node.statements) {
     if (stmt) {
-      emit_loc(stmt->line);
+      emit_loc(stmt->line, stmt->file_id);
       stmt->accept(*this);
     }
   }
 }
 
 void AVRCodeGenerator::visit(const VarDeclNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   if (node.data_type == DataType::Long || node.data_type == DataType::LongLong) {
     unsupported(node, "type modifier 'long'");
   }
@@ -635,7 +650,7 @@ void AVRCodeGenerator::visit(const InitListNode &node) {
 }
 
 void AVRCodeGenerator::visit(const AssignNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   if (!node.left) {
     throw std::runtime_error("Left-hand side of assignment cannot be null");
   }
@@ -1105,7 +1120,7 @@ void AVRCodeGenerator::visit(const BinaryOpNode &node) {
 }
 
 void AVRCodeGenerator::visit(const IfNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::string else_lbl = new_label(".Lif_else");
   std::string end_lbl = new_label(".Lif_end");
 
@@ -1128,7 +1143,7 @@ void AVRCodeGenerator::visit(const IfNode &node) {
 }
 
 void AVRCodeGenerator::visit(const ForNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::string cond_lbl = new_label(".Lfor_cond");
   std::string step_lbl = new_label(".Lfor_step");
   std::string end_lbl = new_label(".Lfor_end");
@@ -1161,7 +1176,7 @@ void AVRCodeGenerator::visit(const ForNode &node) {
 }
 
 void AVRCodeGenerator::visit(const WhileNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::string cond_lbl = new_label(".Lavr_while_cond");
   std::string end_lbl = new_label(".Lavr_while_end");
 
@@ -1185,7 +1200,7 @@ void AVRCodeGenerator::visit(const WhileNode &node) {
 }
 
 void AVRCodeGenerator::visit(const DoWhileNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::string body_lbl = new_label(".Lavr_dowhile_body");
   std::string cond_lbl = new_label(".Lavr_dowhile_cond");
   std::string end_lbl = new_label(".Lavr_dowhile_end");
@@ -1209,7 +1224,7 @@ void AVRCodeGenerator::visit(const DoWhileNode &node) {
 }
 
 void AVRCodeGenerator::visit(const SwitchNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::string end_lbl = new_label(".Lavr_switch_end");
   std::string default_lbl = "";
   int cond_offset = get_var_offset("@avr_switch_cond_" + std::to_string(label_counter_));
@@ -1270,17 +1285,17 @@ void AVRCodeGenerator::visit(const SwitchNode &node) {
 }
 
 void AVRCodeGenerator::visit(const CaseNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   for (const auto &stmt : node.statements) {
     if (stmt) {
-      emit_loc(stmt->line);
+      emit_loc(stmt->line, stmt->file_id);
       stmt->accept(*this);
     }
   }
 }
 
 void AVRCodeGenerator::visit(const BreakNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   if (break_stack_.empty()) {
     unsupported(node, "break statement outside of loop or switch");
   }
@@ -1288,7 +1303,7 @@ void AVRCodeGenerator::visit(const BreakNode &node) {
 }
 
 void AVRCodeGenerator::visit(const ContinueNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   if (continue_stack_.empty()) {
     unsupported(node, "continue statement outside of loop");
   }
@@ -1296,17 +1311,17 @@ void AVRCodeGenerator::visit(const ContinueNode &node) {
 }
 
 void AVRCodeGenerator::visit(const GotoNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   emit_line("rjmp .Luser_" + node.label);
 }
 
 void AVRCodeGenerator::visit(const LabelNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   emit_raw(".Luser_" + node.name + ":");
 }
 
 void AVRCodeGenerator::visit(const ReturnNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   if (node.expr) {
     node.expr->accept(*this);
   }
@@ -1399,7 +1414,7 @@ void AVRCodeGenerator::visit(const MemberAccessNode &node) {
 }
 
 void AVRCodeGenerator::visit(const AsmStmtNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::istringstream stream(node.asm_code);
   std::string line;
   while (std::getline(stream, line)) {

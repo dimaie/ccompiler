@@ -196,8 +196,9 @@ public:
 class ASTNode {
 public:
   int line{0};
+  int file_id{1};
 
-  explicit ASTNode(int line = 0) : line(line) {}
+  explicit ASTNode(int line = 0, int file_id = 1) : line(line), file_id(file_id) {}
   virtual ~ASTNode() = default;
 
   virtual ASTNodeType getType() const = 0;
@@ -215,8 +216,9 @@ protected:
 class ProgramNode : public ASTNode {
 public:
   std::vector<std::unique_ptr<ASTNode>> statements;
+  std::vector<std::string> file_table;
 
-  explicit ProgramNode(int line = 1) : ASTNode(line) {}
+  explicit ProgramNode(int line = 1, int file_id = 1) : ASTNode(line, file_id) {}
 
   ASTNodeType getType() const override { return ASTNodeType::Program; }
   void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }

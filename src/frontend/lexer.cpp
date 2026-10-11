@@ -64,6 +64,10 @@ void Lexer::init(const char *source) {
   cursor_ = 0;
   line_ = 1;
   col_ = 1;
+  current_file_id_ = 1;
+  current_filename_.clear();
+  file_table_.clear();
+  file_id_map_.clear();
   lookahead_count_ = 0;
 
   // Skip UTF-8 BOM if present (0xEF, 0xBB, 0xBF)
@@ -71,6 +75,22 @@ void Lexer::init(const char *source) {
       static_cast<unsigned char>(src_[1]) == 0xBB &&
       static_cast<unsigned char>(src_[2]) == 0xBF) {
     cursor_ = 3;
+  }
+}
+
+void Lexer::setFilename(const std::string &name) {
+  std::string norm = name;
+  for (char &c : norm) {
+    if (c == '\\') c = '/';
+  }
+  current_filename_ = norm;
+  auto it = file_id_map_.find(norm);
+  if (it != file_id_map_.end()) {
+    current_file_id_ = it->second;
+  } else {
+    file_table_.push_back(norm);
+    current_file_id_ = static_cast<int>(file_table_.size());
+    file_id_map_[norm] = current_file_id_;
   }
 }
 
@@ -102,11 +122,86 @@ char Lexer::advance_char() {
   return c;
 }
 
+void Lexer::parse_line_directive() {
+  advance_char(); // consume '#'
+  while (peek_char() == ' ' || peek_char() == '\t') advance_char();
+
+  // Check for "line"
+  if (peek_char() == 'l' && peek_next_char() == 'i') {
+    std::string word;
+    while (std::isalpha(static_cast<unsigned char>(peek_char()))) {
+      word += advance_char();
+    }
+    if (word != "line") {
+      while (peek_char() != '\n' && peek_char() != '\0') advance_char();
+      if (peek_char() == '\n') advance_char();
+      return;
+    }
+    while (peek_char() == ' ' || peek_char() == '\t') advance_char();
+  }
+
+  // Parse line number
+  if (!std::isdigit(static_cast<unsigned char>(peek_char()))) {
+    while (peek_char() != '\n' && peek_char() != '\0') advance_char();
+    if (peek_char() == '\n') advance_char();
+    return;
+  }
+
+  int new_line = 0;
+  while (std::isdigit(static_cast<unsigned char>(peek_char()))) {
+    new_line = new_line * 10 + (advance_char() - '0');
+  }
+
+  while (peek_char() == ' ' || peek_char() == '\t') advance_char();
+
+  // Optional filename: "filename"
+  std::string new_filename;
+  if (peek_char() == '"') {
+    advance_char(); // consume '"'
+    while (peek_char() != '"' && peek_char() != '\n' && peek_char() != '\0') {
+      if (peek_char() == '\\') {
+        advance_char(); // consume '\'
+        if (peek_char() == '\\') {
+          new_filename += '/';
+          advance_char();
+        } else if (peek_char() == '"') {
+          new_filename += '"';
+          advance_char();
+        } else {
+          new_filename += '/';
+        }
+      } else {
+        new_filename += advance_char();
+      }
+    }
+    if (peek_char() == '"') advance_char(); // consume '"'
+  }
+
+  // Consume remainder of line (e.g. trailing flags)
+  while (peek_char() != '\n' && peek_char() != '\0') {
+    advance_char();
+  }
+  if (peek_char() == '\n') {
+    advance_char(); // consume '\n'
+  }
+
+  // Set line number and filename for the NEXT line of code
+  line_ = new_line;
+  col_ = 1;
+  if (!new_filename.empty()) {
+    setFilename(new_filename);
+  }
+}
+
 void Lexer::skip_whitespace_and_comments() {
+  bool at_line_start = (col_ == 1);
   while (true) {
     char c = peek_char();
-    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+    if (c == ' ' || c == '\t' || c == '\r') {
       advance_char();
+    } else if (c == '\n') {
+      advance_char();
+      at_line_start = true;
     } else if (c == '/' && peek_next_char() == '/') {
       while (peek_char() != '\n' && peek_char() != '\0') {
         advance_char();
@@ -120,8 +215,16 @@ void Lexer::skip_whitespace_and_comments() {
           advance_char(); // consume '/'
           break;
         }
-        advance_char();
+        if (peek_char() == '\n') {
+          advance_char();
+          at_line_start = true;
+        } else {
+          advance_char();
+        }
       }
+    } else if (c == '#' && at_line_start) {
+      parse_line_directive();
+      at_line_start = true;
     } else {
       break;
     }
@@ -174,6 +277,7 @@ Token Lexer::scan_token() {
   Token tok{};
   tok.line = line_;
   tok.col = col_;
+  tok.file_id = current_file_id_;
 
   char c = peek_char();
 

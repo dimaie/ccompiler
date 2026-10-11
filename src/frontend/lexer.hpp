@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <vector>
 
 /**
  * @brief Enumeration of all token categories recognized by the lexer.
@@ -115,6 +117,7 @@ struct Token {
   char text[128]{};        /**< Literal character text of the token */
   int line{1};             /**< 1-based source line number where token starts */
   int col{1}; /**< 1-based source column number where token starts */
+  int file_id{1};          /**< 1-based source file ID where token starts */
   union {
     int64_t int_val;  /**< Evaluated 64-bit integer value (for TOK_INT_LIT,
                          TOK_CHAR_LIT) */
@@ -144,12 +147,17 @@ public:
   size_t getCursor() const { return cursor_; }
   int getLine() const { return line_; }
   int getCol() const { return col_; }
+  int getFileId() const { return current_file_id_; }
+  const std::string &getFilename() const { return current_filename_; }
+  const std::vector<std::string> &getFileTable() const { return file_table_; }
+  void setFilename(const std::string &name);
 
 private:
   char peek_char() const;
   char peek_next_char() const;
   char advance_char();
   void skip_whitespace_and_comments();
+  void parse_line_directive();
   char parse_escape_sequence();
   Token scan_token();
 
@@ -158,6 +166,10 @@ private:
   size_t cursor_{0};
   int line_{1};
   int col_{1};
+  int current_file_id_{1};
+  std::string current_filename_;
+  std::vector<std::string> file_table_;
+  std::unordered_map<std::string, int> file_id_map_;
   Token lookahead_[LOOKAHEAD_BUFFER]{};
   int lookahead_count_{0};
 };

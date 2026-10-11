@@ -170,57 +170,49 @@ std::unique_ptr<ReturnNode> Parser::parse_return() {
 
 std::unique_ptr<ASTNode> Parser::parse_statement() {
   Token t = peek();
+  std::unique_ptr<ASTNode> res = nullptr;
 
   if (t.type == TOK_KW_STATIC || t.type == TOK_KW_EXTERN ||
       is_type_specifier(t.type) || is_calling_convention(t.type)) {
-    return parse_declaration();
-  }
-  if (t.type == TOK_KW_FOR) {
-    return parse_for();
-  }
-  if (t.type == TOK_KW_WHILE) {
-    return parse_while();
-  }
-  if (t.type == TOK_KW_DO) {
-    return parse_do_while();
-  }
-  if (t.type == TOK_KW_SWITCH) {
-    return parse_switch();
-  }
-  if (t.type == TOK_KW_BREAK) {
-    return parse_break();
-  }
-  if (t.type == TOK_KW_CONTINUE) {
-    return parse_continue();
-  }
-  if (t.type == TOK_KW_GOTO) {
-    return parse_goto();
-  }
-  if (t.type == TOK_IDENTIFIER && peek(2).type == TOK_COLON) {
+    res = parse_declaration();
+  } else if (t.type == TOK_KW_FOR) {
+    res = parse_for();
+  } else if (t.type == TOK_KW_WHILE) {
+    res = parse_while();
+  } else if (t.type == TOK_KW_DO) {
+    res = parse_do_while();
+  } else if (t.type == TOK_KW_SWITCH) {
+    res = parse_switch();
+  } else if (t.type == TOK_KW_BREAK) {
+    res = parse_break();
+  } else if (t.type == TOK_KW_CONTINUE) {
+    res = parse_continue();
+  } else if (t.type == TOK_KW_GOTO) {
+    res = parse_goto();
+  } else if (t.type == TOK_IDENTIFIER && peek(2).type == TOK_COLON) {
     Token label_tok = expect(TOK_IDENTIFIER, "Expected label identifier");
     expect(TOK_COLON, "Expected ':' after label");
-    return std::make_unique<LabelNode>(label_tok.line, label_tok.text);
-  }
-  if (t.type == TOK_SEMICOLON) {
+    res = std::make_unique<LabelNode>(label_tok.line, label_tok.text);
+  } else if (t.type == TOK_SEMICOLON) {
     expect(TOK_SEMICOLON, "Expected ';'");
     return nullptr;
-  }
-  if (t.type == TOK_KW_ASM) {
-    return parse_asm();
-  }
-  if (t.type == TOK_KW_IF) {
-    return parse_if();
-  }
-  if (t.type == TOK_KW_RETURN) {
-    return parse_return();
-  }
-  if (t.type == TOK_LBRACE) {
-    return parse_compound_statement();
+  } else if (t.type == TOK_KW_ASM) {
+    res = parse_asm();
+  } else if (t.type == TOK_KW_IF) {
+    res = parse_if();
+  } else if (t.type == TOK_KW_RETURN) {
+    res = parse_return();
+  } else if (t.type == TOK_LBRACE) {
+    res = parse_compound_statement();
+  } else {
+    res = parse_expr();
+    expect(TOK_SEMICOLON, "Expected ';' after expression");
   }
 
-  auto expr = parse_expr();
-  expect(TOK_SEMICOLON, "Expected ';' after expression");
-  return expr;
+  if (res) {
+    res->file_id = t.file_id;
+  }
+  return res;
 }
 
 std::unique_ptr<AsmStmtNode> Parser::parse_asm() {
@@ -261,13 +253,18 @@ std::unique_ptr<AsmStmtNode> Parser::parse_asm() {
 
   expect(TOK_RPAREN, "Expected ')' after asm code");
   expect(TOK_SEMICOLON, "Expected ';' after asm statement");
-  return std::make_unique<AsmStmtNode>(asm_tok.line, asm_code, is_volatile);
+  auto asm_node = std::make_unique<AsmStmtNode>(asm_tok.line, asm_code, is_volatile);
+  asm_node->file_id = asm_tok.file_id;
+  return asm_node;
 }
 
 std::unique_ptr<ProgramNode> Parser::parse_program() {
   auto prog = std::make_unique<ProgramNode>(1);
   while (peek().type != TOK_EOF) {
     prog->append(parse_statement());
+  }
+  if (lexer_) {
+    prog->file_table = lexer_->getFileTable();
   }
   return prog;
 }

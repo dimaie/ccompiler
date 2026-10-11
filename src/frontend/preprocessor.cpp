@@ -92,7 +92,15 @@ void Preprocessor::init_virtual_headers() {
 
 std::string Preprocessor::process(const std::string &source, const std::string &current_filepath) {
   include_depth_ = 0;
-  return process_internal(source, current_filepath);
+  std::string norm_path = current_filepath;
+  for (char &c : norm_path) {
+    if (c == '\\') c = '/';
+  }
+  std::string res = process_internal(source, norm_path);
+  if (!norm_path.empty()) {
+    res = "#line 1 \"" + norm_path + "\"\n" + res;
+  }
+  return res;
 }
 
 std::string Preprocessor::resolve_include_path(const std::string &header, bool is_quote, const std::string &current_file_dir) {
@@ -407,7 +415,9 @@ std::string Preprocessor::process_internal(const std::string &source, const std:
     return cond_stack.empty() || cond_stack.back().current_active;
   };
 
+  int current_line_num = 0;
   while (std::getline(stream, line)) {
+    current_line_num++;
     std::string trimmed = trim(line);
 
     // Check for preprocessor directive (#...)
@@ -416,6 +426,11 @@ std::string Preprocessor::process_internal(const std::string &source, const std:
       std::istringstream dstream(directive_content);
       std::string directive;
       dstream >> directive;
+
+      if (directive == "line") {
+        result += line + "\n";
+        continue;
+      }
 
       if (directive == "ifdef") {
         std::string macro_name;
@@ -550,10 +565,22 @@ std::string Preprocessor::process_internal(const std::string &source, const std:
           throw std::runtime_error("Preprocessor error: cannot find include file: " + header);
         }
 
+        std::string norm_cur = current_filepath;
+        for (char &c : norm_cur) {
+          if (c == '\\') c = '/';
+        }
+
         if (resolved.rfind("__virtual__:", 0) == 0) {
           std::string vname = resolved.substr(12);
+          for (char &c : vname) {
+            if (c == '\\') c = '/';
+          }
           std::string inc_res = process_internal(virtual_headers_[vname], vname);
+          result += "#line 1 \"" + vname + "\"\n";
           result += inc_res + "\n";
+          if (!norm_cur.empty()) {
+            result += "#line " + std::to_string(current_line_num + 1) + " \"" + norm_cur + "\"\n";
+          }
         } else {
           std::ifstream inc_file(resolved);
           if (!inc_file.is_open()) {
@@ -561,8 +588,16 @@ std::string Preprocessor::process_internal(const std::string &source, const std:
           }
           std::stringstream buf;
           buf << inc_file.rdbuf();
-          std::string inc_res = process_internal(buf.str(), resolved);
+          std::string norm_resolved = resolved;
+          for (char &c : norm_resolved) {
+            if (c == '\\') c = '/';
+          }
+          std::string inc_res = process_internal(buf.str(), norm_resolved);
+          result += "#line 1 \"" + norm_resolved + "\"\n";
           result += inc_res + "\n";
+          if (!norm_cur.empty()) {
+            result += "#line " + std::to_string(current_line_num + 1) + " \"" + norm_cur + "\"\n";
+          }
         }
         continue;
       }

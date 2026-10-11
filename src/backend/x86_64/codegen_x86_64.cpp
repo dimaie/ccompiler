@@ -13,10 +13,12 @@ void X86_64CodeGenerator::emit_raw(const std::string &line) {
   *out_ << line << "\n";
 }
 
-void X86_64CodeGenerator::emit_loc(int line) {
-  if (options_.emit_debug_info && line > 0 && line != last_emitted_line_) {
-    *out_ << "    .loc 1 " << line << " 0\n";
+void X86_64CodeGenerator::emit_loc(int line, int file_id) {
+  int fid = (file_id > 0) ? file_id : 1;
+  if (options_.emit_debug_info && line > 0 && (line != last_emitted_line_ || fid != last_emitted_file_id_)) {
+    *out_ << "    .loc " << fid << " " << line << " 0\n";
     last_emitted_line_ = line;
+    last_emitted_file_id_ = fid;
   }
 }
 
@@ -237,10 +239,20 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
   continue_stack_.clear();
   string_literals_.clear();
   last_emitted_line_ = 0;
+  last_emitted_file_id_ = 0;
 
   if (options_.emit_debug_info) {
-    std::string filename = options_.source_filename.empty() ? "input.c" : options_.source_filename;
-    emit_raw("    .file 1 \"" + filename + "\"");
+    if (!program.file_table.empty()) {
+      for (size_t i = 0; i < program.file_table.size(); ++i) {
+        std::string f = program.file_table[i];
+        for (char &c : f) { if (c == '\\') c = '/'; }
+        emit_raw("    .file " + std::to_string(i + 1) + " \"" + f + "\"");
+      }
+    } else {
+      std::string filename = options_.source_filename.empty() ? "input.c" : options_.source_filename;
+      for (char &c : filename) { if (c == '\\') c = '/'; }
+      emit_raw("    .file 1 \"" + filename + "\"");
+    }
   }
 
   for (const auto &stmt : program.statements) {
@@ -286,7 +298,9 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
 
     emit_raw(".globl main");
     emit_raw("main:");
-    emit_loc(1);
+    int fid = (!program.statements.empty() && program.statements[0]) ? program.statements[0]->file_id : 1;
+    int ln = (!program.statements.empty() && program.statements[0]) ? program.statements[0]->line : 1;
+    emit_loc(ln, fid);
     emit_line("pushq %rbp");
     emit_line("movq %rsp, %rbp");
     emit_line("subq $" + std::to_string(frame_size) + ", %rsp");
@@ -337,7 +351,9 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
     emit_line("pushq %rbp");
     emit_line("movq %rsp, %rbp");
     emit_line("subq $" + std::to_string(frame_size) + ", %rsp");
-    emit_loc(1);
+    int fid = (!non_func_stmts.empty() && non_func_stmts[0]) ? non_func_stmts[0]->file_id : 1;
+    int ln = (!non_func_stmts.empty() && non_func_stmts[0]) ? non_func_stmts[0]->line : 1;
+    emit_loc(ln, fid);
     *out_ << body_ss.str();
     emit_raw(ret_label_ + ":");
     emit_line("leave");
@@ -449,7 +465,7 @@ void X86_64CodeGenerator::visit(const FuncDefNode &node) {
     emit_raw(".globl " + node.name);
   }
   emit_raw(node.name + ":");
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   emit_line("pushq %rbp");
   emit_line("movq %rsp, %rbp");
   emit_line("subq $" + std::to_string(frame_size) + ", %rsp");
@@ -471,7 +487,7 @@ void X86_64CodeGenerator::visit(const FuncDefNode &node) {
 }
 
 void X86_64CodeGenerator::visit(const CallNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   CallingConvention cc = CallingConvention::Default;
   if (!node.callee.empty()) {
     auto it = func_conventions_.find(node.callee);
@@ -632,7 +648,7 @@ void X86_64CodeGenerator::visit(const CallNode &node) {
 void X86_64CodeGenerator::visit(const ProgramNode &node) {
   for (const auto &stmt : node.statements) {
     if (stmt) {
-      emit_loc(stmt->line);
+      emit_loc(stmt->line, stmt->file_id);
       stmt->accept(*this);
     }
   }
@@ -641,14 +657,14 @@ void X86_64CodeGenerator::visit(const ProgramNode &node) {
 void X86_64CodeGenerator::visit(const CompoundNode &node) {
   for (const auto &stmt : node.statements) {
     if (stmt) {
-      emit_loc(stmt->line);
+      emit_loc(stmt->line, stmt->file_id);
       stmt->accept(*this);
     }
   }
 }
 
 void X86_64CodeGenerator::visit(const VarDeclNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   var_types_[node.name] = node.data_type;
   var_pointer_level_[node.name] = node.pointer_level;
   if (node.is_func_ptr) {
@@ -796,7 +812,7 @@ void X86_64CodeGenerator::visit(const InitListNode &node) {
 }
 
 void X86_64CodeGenerator::visit(const AssignNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   if (!node.left) {
     throw std::runtime_error("Left-hand side of assignment cannot be null");
   }
@@ -1225,7 +1241,7 @@ void X86_64CodeGenerator::visit(const BinaryOpNode &node) {
 }
 
 void X86_64CodeGenerator::visit(const IfNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::string else_lbl = new_label(".Lelse");
   std::string end_lbl = new_label(".Lif_end");
 
@@ -1248,7 +1264,7 @@ void X86_64CodeGenerator::visit(const IfNode &node) {
 }
 
 void X86_64CodeGenerator::visit(const ForNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::string cond_lbl = new_label(".Lfor_cond");
   std::string step_lbl = new_label(".Lfor_step");
   std::string end_lbl = new_label(".Lfor_end");
@@ -1281,7 +1297,7 @@ void X86_64CodeGenerator::visit(const ForNode &node) {
 }
 
 void X86_64CodeGenerator::visit(const WhileNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::string cond_lbl = new_label(".Lwhile_cond");
   std::string end_lbl = new_label(".Lwhile_end");
 
@@ -1305,7 +1321,7 @@ void X86_64CodeGenerator::visit(const WhileNode &node) {
 }
 
 void X86_64CodeGenerator::visit(const DoWhileNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::string body_lbl = new_label(".Ldowhile_body");
   std::string cond_lbl = new_label(".Ldowhile_cond");
   std::string end_lbl = new_label(".Ldowhile_end");
@@ -1329,7 +1345,7 @@ void X86_64CodeGenerator::visit(const DoWhileNode &node) {
 }
 
 void X86_64CodeGenerator::visit(const SwitchNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::string end_lbl = new_label(".Lswitch_end");
   std::string default_lbl = "";
   int cond_offset = get_var_offset("@switch_cond_" + std::to_string(label_counter_));
@@ -1388,17 +1404,17 @@ void X86_64CodeGenerator::visit(const SwitchNode &node) {
 }
 
 void X86_64CodeGenerator::visit(const CaseNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   for (const auto &stmt : node.statements) {
     if (stmt) {
-      emit_loc(stmt->line);
+      emit_loc(stmt->line, stmt->file_id);
       stmt->accept(*this);
     }
   }
 }
 
 void X86_64CodeGenerator::visit(const BreakNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   if (break_stack_.empty()) {
     unsupported(node, "break statement outside of loop or switch");
   }
@@ -1406,7 +1422,7 @@ void X86_64CodeGenerator::visit(const BreakNode &node) {
 }
 
 void X86_64CodeGenerator::visit(const ContinueNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   if (continue_stack_.empty()) {
     unsupported(node, "continue statement outside of loop");
   }
@@ -1414,17 +1430,17 @@ void X86_64CodeGenerator::visit(const ContinueNode &node) {
 }
 
 void X86_64CodeGenerator::visit(const GotoNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   emit_line("jmp .Luser_" + node.label);
 }
 
 void X86_64CodeGenerator::visit(const LabelNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   emit_raw(".Luser_" + node.name + ":");
 }
 
 void X86_64CodeGenerator::visit(const ReturnNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   if (node.expr) {
     node.expr->accept(*this);
   }
@@ -1518,7 +1534,7 @@ void X86_64CodeGenerator::visit(const MemberAccessNode &node) {
 }
 
 void X86_64CodeGenerator::visit(const AsmStmtNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::istringstream stream(node.asm_code);
   std::string line;
   while (std::getline(stream, line)) {

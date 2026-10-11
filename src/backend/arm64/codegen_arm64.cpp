@@ -13,10 +13,12 @@ void ARM64CodeGenerator::emit_raw(const std::string &line) {
   *out_ << line << "\n";
 }
 
-void ARM64CodeGenerator::emit_loc(int line) {
-  if (options_.emit_debug_info && line > 0 && line != last_emitted_line_) {
-    *out_ << "    .loc 1 " << line << " 0\n";
+void ARM64CodeGenerator::emit_loc(int line, int file_id) {
+  int fid = (file_id > 0) ? file_id : 1;
+  if (options_.emit_debug_info && line > 0 && (line != last_emitted_line_ || fid != last_emitted_file_id_)) {
+    *out_ << "    .loc " << fid << " " << line << " 0\n";
     last_emitted_line_ = line;
+    last_emitted_file_id_ = fid;
   }
 }
 
@@ -165,10 +167,20 @@ void ARM64CodeGenerator::generate(const ProgramNode &program,
   emit_raw(".arch armv8-a");
   emit_raw(".text");
   last_emitted_line_ = 0;
+  last_emitted_file_id_ = 0;
 
   if (options_.emit_debug_info) {
-    std::string filename = options_.source_filename.empty() ? "input.c" : options_.source_filename;
-    emit_raw("    .file 1 \"" + filename + "\"");
+    if (!program.file_table.empty()) {
+      for (size_t i = 0; i < program.file_table.size(); ++i) {
+        std::string f = program.file_table[i];
+        for (char &c : f) { if (c == '\\') c = '/'; }
+        emit_raw("    .file " + std::to_string(i + 1) + " \"" + f + "\"");
+      }
+    } else {
+      std::string filename = options_.source_filename.empty() ? "input.c" : options_.source_filename;
+      for (char &c : filename) { if (c == '\\') c = '/'; }
+      emit_raw("    .file 1 \"" + filename + "\"");
+    }
   }
 
   if (!has_func_defs) {
@@ -186,7 +198,9 @@ void ARM64CodeGenerator::generate(const ProgramNode &program,
     // Prologue: Allocate frame (16-byte aligned) & save frame pointer + link register
     emit_line("stp x29, x30, [sp, -" + std::to_string(frame_size) + "]!    // save FP and LR, alloc frame");
     emit_line("mov x29, sp                 // set frame pointer");
-    emit_loc(1);
+    int fid = (!program.statements.empty() && program.statements[0]) ? program.statements[0]->file_id : 1;
+    int ln = (!program.statements.empty() && program.statements[0]) ? program.statements[0]->line : 1;
+    emit_loc(ln, fid);
 
     program.accept(*this);
 
@@ -225,7 +239,9 @@ void ARM64CodeGenerator::generate(const ProgramNode &program,
 
     emit_line("stp x29, x30, [sp, -" + std::to_string(frame_size) + "]!    // save FP and LR, alloc frame");
     emit_line("mov x29, sp                 // set frame pointer");
-    emit_loc(1);
+    int fid = (!non_func_stmts.empty() && non_func_stmts[0]) ? non_func_stmts[0]->file_id : 1;
+    int ln = (!non_func_stmts.empty() && non_func_stmts[0]) ? non_func_stmts[0]->line : 1;
+    emit_loc(ln, fid);
 
     for (const auto *stmt : non_func_stmts) {
       stmt->accept(*this);
@@ -263,7 +279,7 @@ void ARM64CodeGenerator::visit(const FuncDefNode &node) {
   emit_raw(node.name + ":");
   emit_line("stp x29, x30, [sp, -" + std::to_string(frame_size) + "]!    // save FP and LR, alloc frame");
   emit_line("mov x29, sp                 // set frame pointer");
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
 
   static const char *const ARG_REGS[] = {
       "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"};
@@ -296,7 +312,7 @@ void ARM64CodeGenerator::visit(const FuncDefNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const CallNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   if (node.args.size() > 8) {
     unsupported(node, "more than 8 function call arguments");
   }
@@ -339,7 +355,7 @@ void ARM64CodeGenerator::visit(const CallNode &node) {
 void ARM64CodeGenerator::visit(const ProgramNode &node) {
   for (const auto &stmt : node.statements) {
     if (stmt) {
-      emit_loc(stmt->line);
+      emit_loc(stmt->line, stmt->file_id);
       stmt->accept(*this);
     }
   }
@@ -348,14 +364,14 @@ void ARM64CodeGenerator::visit(const ProgramNode &node) {
 void ARM64CodeGenerator::visit(const CompoundNode &node) {
   for (const auto &stmt : node.statements) {
     if (stmt) {
-      emit_loc(stmt->line);
+      emit_loc(stmt->line, stmt->file_id);
       stmt->accept(*this);
     }
   }
 }
 
 void ARM64CodeGenerator::visit(const VarDeclNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   var_types_[node.name] = node.data_type;
   if (node.is_func_ptr) {
     is_func_ptr_[node.name] = true;
@@ -463,7 +479,7 @@ void ARM64CodeGenerator::visit(const InitListNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const AssignNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   if (!node.left) {
     throw std::runtime_error("Left-hand side of assignment cannot be null");
   }
@@ -803,7 +819,7 @@ void ARM64CodeGenerator::visit(const BinaryOpNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const IfNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::string else_lbl = new_label(".Larm_if_else");
   std::string end_lbl = new_label(".Larm_if_end");
 
@@ -825,7 +841,7 @@ void ARM64CodeGenerator::visit(const IfNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const ForNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::string cond_lbl = new_label(".Larm_for_cond");
   std::string step_lbl = new_label(".Larm_for_step");
   std::string end_lbl = new_label(".Larm_for_end");
@@ -857,7 +873,7 @@ void ARM64CodeGenerator::visit(const ForNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const WhileNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::string cond_lbl = new_label(".Larm_while_cond");
   std::string end_lbl = new_label(".Larm_while_end");
 
@@ -880,7 +896,7 @@ void ARM64CodeGenerator::visit(const WhileNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const DoWhileNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::string body_lbl = new_label(".Larm_dowhile_body");
   std::string cond_lbl = new_label(".Larm_dowhile_cond");
   std::string end_lbl = new_label(".Larm_dowhile_end");
@@ -903,7 +919,7 @@ void ARM64CodeGenerator::visit(const DoWhileNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const SwitchNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::string end_lbl = new_label(".Larm_switch_end");
   std::string default_lbl = "";
   int cond_offset = get_var_offset("@arm_switch_cond_" + std::to_string(label_counter_));
@@ -961,17 +977,17 @@ void ARM64CodeGenerator::visit(const SwitchNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const CaseNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   for (const auto &stmt : node.statements) {
     if (stmt) {
-      emit_loc(stmt->line);
+      emit_loc(stmt->line, stmt->file_id);
       stmt->accept(*this);
     }
   }
 }
 
 void ARM64CodeGenerator::visit(const BreakNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   if (break_stack_.empty()) {
     unsupported(node, "break statement outside of loop or switch");
   }
@@ -979,7 +995,7 @@ void ARM64CodeGenerator::visit(const BreakNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const ContinueNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   if (continue_stack_.empty()) {
     unsupported(node, "continue statement outside of loop");
   }
@@ -987,17 +1003,17 @@ void ARM64CodeGenerator::visit(const ContinueNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const GotoNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   emit_line("b .Luser_" + node.label);
 }
 
 void ARM64CodeGenerator::visit(const LabelNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   emit_raw(".Luser_" + node.name + ":");
 }
 
 void ARM64CodeGenerator::visit(const ReturnNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   if (node.expr) {
     node.expr->accept(*this);
   }
@@ -1087,7 +1103,7 @@ void ARM64CodeGenerator::visit(const MemberAccessNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const AsmStmtNode &node) {
-  emit_loc(node.line);
+  emit_loc(node.line, node.file_id);
   std::istringstream stream(node.asm_code);
   std::string line;
   while (std::getline(stream, line)) {
