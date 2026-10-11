@@ -164,9 +164,11 @@ void CCodeGenerator::visit(const FuncDefNode &node) {
       }
     }
   }
-  *out_ << ") ";
   if (node.body) {
+    *out_ << ") ";
     node.body->accept(*this);
+  } else {
+    *out_ << ");";
   }
   *out_ << "\n";
 }

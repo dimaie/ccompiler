@@ -1458,6 +1458,122 @@ static void test_char_and_string_literals() {
   }
 }
 
+#include "preprocessor.hpp"
+
+static void test_preprocessor() {
+  std::cout << "Testing Preprocessor Subsystem...\n";
+
+  // 1. Object-like macro definition and expansion
+  {
+    Preprocessor pp;
+    std::string src =
+        "#define FOO 42\n"
+        "#define BAR (FOO + 1)\n"
+        "int x = BAR;\n";
+    std::string out = pp.process(src);
+    assert(out.find("int x = (42 + 1);") != std::string::npos);
+  }
+
+  // 2. Function-like macro definition and expansion
+  {
+    Preprocessor pp;
+    std::string src =
+        "#define ADD(a, b) ((a) + (b))\n"
+        "#define MULT(x, y) ((x) * (y))\n"
+        "int val = ADD(10, MULT(2, 3));\n";
+    std::string out = pp.process(src);
+    assert(out.find("int val = ((10) + (((2) * (3))));") != std::string::npos);
+  }
+
+  // 3. ifdef / ifndef / else / endif
+  {
+    Preprocessor pp;
+    std::string src =
+        "#define FLAG_A\n"
+        "#ifdef FLAG_A\n"
+        "int a = 1;\n"
+        "#else\n"
+        "int a = 0;\n"
+        "#endif\n"
+        "#ifndef FLAG_B\n"
+        "int b = 2;\n"
+        "#else\n"
+        "int b = 0;\n"
+        "#endif\n";
+    std::string out = pp.process(src);
+    assert(out.find("int a = 1;") != std::string::npos);
+    assert(out.find("int a = 0;") == std::string::npos);
+    assert(out.find("int b = 2;") != std::string::npos);
+    assert(out.find("int b = 0;") == std::string::npos);
+  }
+
+  // 4. Nested conditionals and #undef
+  {
+    Preprocessor pp;
+    std::string src =
+        "#define FEATURE\n"
+        "#ifdef FEATURE\n"
+        "  #define SUBFEATURE 100\n"
+        "  int f = SUBFEATURE;\n"
+        "  #undef FEATURE\n"
+        "#endif\n"
+        "#ifdef FEATURE\n"
+        "  int error = 1;\n"
+        "#else\n"
+        "  int clean = 2;\n"
+        "#endif\n";
+    std::string out = pp.process(src);
+    assert(out.find("int f = 100;") != std::string::npos);
+    assert(out.find("int error = 1;") == std::string::npos);
+    assert(out.find("int clean = 2;") != std::string::npos);
+  }
+
+  // 5. #if with defined() and logical expressions
+  {
+    Preprocessor pp;
+    std::string src =
+        "#define VERSION 2\n"
+        "#if defined(VERSION) && VERSION == 2\n"
+        "int v = 2;\n"
+        "#elif VERSION == 1\n"
+        "int v = 1;\n"
+        "#else\n"
+        "int v = 0;\n"
+        "#endif\n";
+    std::string out = pp.process(src);
+    assert(out.find("int v = 2;") != std::string::npos);
+    assert(out.find("int v = 1;") == std::string::npos);
+    assert(out.find("int v = 0;") == std::string::npos);
+  }
+
+  // 6. Bundled virtual headers: #include <stdio.h>
+  {
+    Preprocessor pp;
+    std::string src =
+        "#include <stdio.h>\n"
+        "int main() {\n"
+        "    puts(\"test\");\n"
+        "    return 0;\n"
+        "}\n";
+    std::string out = pp.process(src);
+    assert(out.find("int puts(const char *s);") != std::string::npos);
+    assert(out.find("puts(\"test\");") != std::string::npos);
+  }
+
+  // 7. Line continuation with backslash
+  {
+    Preprocessor pp;
+    std::string src =
+        "#define MULTILINE(x) \\\n"
+        "    int res = (x) * 2; \\\n"
+        "    return res;\n"
+        "MULTILINE(5)\n";
+    std::string out = pp.process(src);
+    assert(out.find("int res = (5) * 2;") != std::string::npos);
+    assert(out.find("return res;") != std::string::npos);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running AST & Parser Test Suite\n";
@@ -1492,10 +1608,12 @@ int main() {
   test_struct_node();
   test_code_review_fixes();
   test_char_and_string_literals();
+  test_preprocessor();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (29/29)\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (30/30)\n";
   std::cout << "========================================\n";
   return 0;
 }
+
 

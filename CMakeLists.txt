@@ -18,6 +18,7 @@ set(PARSER_SOURCES
     parser_decl.cpp
     parser_expr.cpp
     parser_stmt.cpp
+    preprocessor.cpp
 )
 
 set(CODEGEN_SOURCES

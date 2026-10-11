@@ -236,6 +236,9 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
 }
 
 void AVRCodeGenerator::visit(const FuncDefNode &node) {
+  if (!node.body) {
+    return;
+  }
   var_offsets_.clear();
   is_array_.clear();
   array_sizes_.clear();

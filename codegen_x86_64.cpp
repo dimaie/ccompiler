@@ -331,6 +331,9 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
 }
 
 void X86_64CodeGenerator::visit(const FuncDefNode &node) {
+  if (!node.body) {
+    return; // Function prototype / declaration, no code to generate
+  }
   var_offsets_.clear();
   var_types_.clear();
   var_pointer_level_.clear();

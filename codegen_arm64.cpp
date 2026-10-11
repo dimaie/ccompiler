@@ -224,6 +224,9 @@ void ARM64CodeGenerator::generate(const ProgramNode &program,
 }
 
 void ARM64CodeGenerator::visit(const FuncDefNode &node) {
+  if (!node.body) {
+    return;
+  }
   var_offsets_.clear();
   var_types_.clear();
   is_array_.clear();

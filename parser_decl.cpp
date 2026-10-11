@@ -4,43 +4,45 @@
 bool Parser::is_type_specifier(TokenType type) const {
   return type == TOK_KW_INT || type == TOK_KW_SHORT || type == TOK_KW_LONG ||
          type == TOK_KW_CHAR || type == TOK_KW_VOID || type == TOK_KW_STRUCT ||
-         type == TOK_KW_UNION;
+         type == TOK_KW_UNION || type == TOK_KW_CONST || type == TOK_KW_VOLATILE;
 }
 
 DataType Parser::parse_type_specifier() {
+  while (match(TOK_KW_CONST) || match(TOK_KW_VOLATILE)) {}
   Token t = peek();
+  DataType result = DataType::Int;
   if (match(TOK_KW_VOID)) {
-    return DataType::Void;
-  }
-  if (match(TOK_KW_CHAR)) {
-    return DataType::Char;
-  }
-  if (match(TOK_KW_SHORT)) {
+    result = DataType::Void;
+  } else if (match(TOK_KW_CHAR)) {
+    result = DataType::Char;
+  } else if (match(TOK_KW_SHORT)) {
     match(TOK_KW_INT); // optional 'int' after 'short'
-    return DataType::Short;
-  }
-  if (match(TOK_KW_LONG)) {
+    result = DataType::Short;
+  } else if (match(TOK_KW_LONG)) {
     if (match(TOK_KW_LONG)) {
       match(TOK_KW_INT); // optional 'int' after 'long long'
-      return DataType::LongLong;
+      result = DataType::LongLong;
+    } else {
+      match(TOK_KW_INT); // optional 'int' after 'long'
+      result = DataType::Long;
     }
-    match(TOK_KW_INT); // optional 'int' after 'long'
-    return DataType::Long;
-  }
-  if (match(TOK_KW_INT)) {
+  } else if (match(TOK_KW_INT)) {
     if (match(TOK_KW_SHORT)) {
-      return DataType::Short;
-    }
-    if (match(TOK_KW_LONG)) {
+      result = DataType::Short;
+    } else if (match(TOK_KW_LONG)) {
       if (match(TOK_KW_LONG)) {
-        return DataType::LongLong;
+        result = DataType::LongLong;
+      } else {
+        result = DataType::Long;
       }
-      return DataType::Long;
+    } else {
+      result = DataType::Int;
     }
-    return DataType::Int;
+  } else {
+    parse_error(t, "Expected type specifier ('int', 'short', 'long', 'char', or 'void')");
   }
-  parse_error(t, "Expected type specifier ('int', 'short', 'long', 'char', or 'void')");
-  return DataType::Int;
+  while (match(TOK_KW_CONST) || match(TOK_KW_VOLATILE)) {}
+  return result;
 }
 
 static std::vector<DataType> parse_func_ptr_param_list(Parser *parser, Lexer *lexer) {
@@ -262,6 +264,11 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
     }
   }
   expect(TOK_RPAREN, "Expected ')' after parameters");
+  if (match(TOK_SEMICOLON)) {
+    return std::make_unique<FuncDefNode>(id_tok.line, return_type, id_tok.text,
+                                         std::move(params), nullptr,
+                                         return_pointer_level);
+  }
   auto body = parse_compound_statement();
   return std::make_unique<FuncDefNode>(id_tok.line, return_type, id_tok.text,
                                        std::move(params), std::move(body),
