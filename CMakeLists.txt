@@ -12,47 +12,74 @@ else()
     add_link_options(-static -static-libgcc -static-libstdc++)
 endif()
 
-set(PARSER_SOURCES
-    lexer.cpp
-    parser_core.cpp
-    parser_decl.cpp
-    parser_expr.cpp
-    parser_stmt.cpp
-    preprocessor.cpp
+include_directories(
+    src/frontend
+    src/ir
+    src/backend
+    src/driver
 )
 
-set(CODEGEN_SOURCES
-    codegen.cpp
-    codegen_x86_64.cpp
-    codegen_arm64.cpp
-    codegen_avr.cpp
-    codegen_c.cpp
-    internal_assembler.cpp
-    internal_pe_linker.cpp
-    assembler_linker.cpp
-    compiler_config.cpp
+set(FRONTEND_SOURCES
+    src/frontend/lexer.cpp
+    src/frontend/parser_core.cpp
+    src/frontend/parser_decl.cpp
+    src/frontend/parser_expr.cpp
+    src/frontend/parser_stmt.cpp
+    src/frontend/preprocessor.cpp
+)
+
+set(IR_SOURCES
+    src/ir/ir.cpp
+    src/ir/ir_builder.cpp
+)
+
+set(BACKEND_SOURCES
+    src/backend/codegen.cpp
+    src/backend/codegen_x86_64.cpp
+    src/backend/codegen_arm64.cpp
+    src/backend/codegen_avr.cpp
+    src/backend/codegen_c.cpp
+    src/backend/internal_assembler.cpp
+    src/backend/internal_pe_linker.cpp
+    src/backend/assembler_linker.cpp
+)
+
+set(DRIVER_SOURCES
+    src/driver/compiler_config.cpp
 )
 
 # Compiler executable
 add_executable(c_compiler
-    ${PARSER_SOURCES}
-    ${CODEGEN_SOURCES}
-    main.cpp
+    ${FRONTEND_SOURCES}
+    ${IR_SOURCES}
+    ${BACKEND_SOURCES}
+    ${DRIVER_SOURCES}
+    src/driver/main.cpp
 )
 
 # Parser test executable
 add_executable(test_parser
-    ${PARSER_SOURCES}
-    test_parser.cpp
+    ${FRONTEND_SOURCES}
+    tests/test_parser.cpp
 )
 
 # Codegen test executable
 add_executable(test_codegen
-    ${PARSER_SOURCES}
-    ${CODEGEN_SOURCES}
-    test_codegen.cpp
+    ${FRONTEND_SOURCES}
+    ${IR_SOURCES}
+    ${BACKEND_SOURCES}
+    ${DRIVER_SOURCES}
+    tests/test_codegen.cpp
+)
+
+# IR test executable
+add_executable(test_ir
+    ${FRONTEND_SOURCES}
+    ${IR_SOURCES}
+    tests/test_ir.cpp
 )
 
 enable_testing()
 add_test(NAME ParserTests COMMAND test_parser)
 add_test(NAME CodegenTests COMMAND test_codegen)
+add_test(NAME IRTests COMMAND test_ir)
