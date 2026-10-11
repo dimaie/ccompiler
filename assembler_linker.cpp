@@ -15,7 +15,7 @@ AssemblerLinkerResult X86_64AssemblerLinker::assemble_and_link(
     AssembledModule module = internal_assembler.assemble(assembly_code);
 
     std::string error_msg;
-    bool success = InternalPELinker::link(std::move(module), output_filepath, error_msg);
+    bool success = InternalPELinker::link(std::move(module), output_filepath, error_msg, config_);
     if (!success) {
       result.success = false;
       result.exit_code = 1;

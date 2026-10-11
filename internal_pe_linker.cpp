@@ -1,7 +1,10 @@
 #include "internal_pe_linker.hpp"
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <map>
+#include <set>
 #include <vector>
 
 namespace {
@@ -113,11 +116,212 @@ void write_int32_le(std::vector<uint8_t> &vec, size_t offset, int32_t val) {
   vec[offset + 3] = static_cast<uint8_t>((u >> 24) & 0xFF);
 }
 
+uint32_t read_u32_be(const uint8_t *p) {
+  return (static_cast<uint32_t>(p[0]) << 24) |
+         (static_cast<uint32_t>(p[1]) << 16) |
+         (static_cast<uint32_t>(p[2]) << 8) |
+         static_cast<uint32_t>(p[3]);
+}
+
 } // namespace
+
+bool InternalPELinker::read_dll_exports(const std::string &dll_path, std::set<std::string> &exports) {
+  std::ifstream file(dll_path, std::ios::binary);
+  if (!file.is_open()) return false;
+
+  uint16_t mz = 0;
+  file.read(reinterpret_cast<char *>(&mz), 2);
+  if (mz != 0x5A4D) return false;
+
+  file.seekg(0x3C);
+  uint32_t pe_offset = 0;
+  file.read(reinterpret_cast<char *>(&pe_offset), 4);
+
+  file.seekg(pe_offset);
+  uint32_t pe_sig = 0;
+  file.read(reinterpret_cast<char *>(&pe_sig), 4);
+  if (pe_sig != 0x00004550) return false;
+
+  // File header
+  file.seekg(pe_offset + 6);
+  uint16_t num_sections = 0;
+  file.read(reinterpret_cast<char *>(&num_sections), 2);
+
+  file.seekg(pe_offset + 20);
+  uint16_t opt_hdr_size = 0;
+  file.read(reinterpret_cast<char *>(&opt_hdr_size), 2);
+
+  file.seekg(pe_offset + 24);
+  uint16_t opt_magic = 0;
+  file.read(reinterpret_cast<char *>(&opt_magic), 2);
+  if (opt_magic != 0x020B) return false; // Must be PE32+ (64-bit)
+
+  // DataDirectory[0] (Export Directory) is at offset: 24 + 112 = 136 in OptionalHeader64
+  file.seekg(pe_offset + 24 + 112);
+  uint32_t export_rva = 0;
+  uint32_t export_size = 0;
+  file.read(reinterpret_cast<char *>(&export_rva), 4);
+  file.read(reinterpret_cast<char *>(&export_size), 4);
+  if (export_rva == 0 || export_size == 0) return true;
+
+  struct SectionInfo {
+    uint32_t va{0};
+    uint32_t vsize{0};
+    uint32_t raw_ptr{0};
+    uint32_t raw_size{0};
+  };
+
+  std::vector<SectionInfo> sections;
+  file.seekg(pe_offset + 24 + opt_hdr_size);
+  for (int i = 0; i < num_sections; ++i) {
+    char s_name[8];
+    uint32_t s_vsize, s_va, s_raw_size, s_raw_ptr;
+    file.read(s_name, 8);
+    file.read(reinterpret_cast<char *>(&s_vsize), 4);
+    file.read(reinterpret_cast<char *>(&s_va), 4);
+    file.read(reinterpret_cast<char *>(&s_raw_size), 4);
+    file.read(reinterpret_cast<char *>(&s_raw_ptr), 4);
+    file.seekg(static_cast<std::streamoff>(file.tellg()) + 16);
+
+    sections.push_back({s_va, s_vsize, s_raw_ptr, s_raw_size});
+  }
+
+  auto rva_to_offset = [&](uint32_t rva) -> uint32_t {
+    for (const auto &s : sections) {
+      uint32_t span = std::max(s.vsize, s.raw_size);
+      if (rva >= s.va && rva < s.va + span) {
+        return s.raw_ptr + (rva - s.va);
+      }
+    }
+    return 0;
+  };
+
+  uint32_t export_file_offset = rva_to_offset(export_rva);
+  if (export_file_offset == 0) return false;
+
+  // IMAGE_EXPORT_DIRECTORY
+  // NumberOfNames is at +24, AddressOfNames is at +32
+  file.seekg(export_file_offset + 24);
+  uint32_t num_names = 0;
+  file.read(reinterpret_cast<char *>(&num_names), 4);
+
+  file.seekg(export_file_offset + 32);
+  uint32_t names_rva = 0;
+  file.read(reinterpret_cast<char *>(&names_rva), 4);
+
+  uint32_t names_file_offset = rva_to_offset(names_rva);
+  if (names_file_offset == 0) return false;
+
+  file.seekg(names_file_offset);
+  std::vector<uint32_t> name_rvas(num_names);
+  file.read(reinterpret_cast<char *>(name_rvas.data()), num_names * 4);
+
+  for (uint32_t nrva : name_rvas) {
+    uint32_t str_offset = rva_to_offset(nrva);
+    if (str_offset == 0) continue;
+    file.seekg(str_offset);
+    std::string name;
+    char c;
+    while (file.get(c) && c != '\0') {
+      name += c;
+    }
+    if (!name.empty()) {
+      exports.insert(name);
+    }
+  }
+
+  return true;
+}
+
+bool InternalPELinker::read_coff_archive(const std::string &lib_path,
+                                         std::unordered_map<std::string, std::string> &import_symbols,
+                                         std::string &error_msg) {
+  std::ifstream file(lib_path, std::ios::binary);
+  if (!file.is_open()) {
+    error_msg = "Cannot open archive file: " + lib_path;
+    return false;
+  }
+
+  // Check magic "!<arch>\n"
+  char magic[8];
+  file.read(magic, 8);
+  if (std::memcmp(magic, "!<arch>\n", 8) != 0) {
+    error_msg = "Not a valid COFF archive: " + lib_path;
+    return false;
+  }
+
+  file.seekg(0, std::ios::end);
+  size_t file_len = static_cast<size_t>(file.tellg());
+
+  std::vector<uint8_t> buffer(file_len);
+  file.seekg(0);
+  file.read(reinterpret_cast<char *>(buffer.data()), file_len);
+
+  auto check_short_import = [&](size_t data_off) {
+    if (data_off + 20 > file_len) return;
+    const uint8_t *mem_data = buffer.data() + data_off;
+    uint16_t sig1 = *reinterpret_cast<const uint16_t *>(mem_data);
+    uint16_t sig2 = *reinterpret_cast<const uint16_t *>(mem_data + 2);
+    if (sig1 == 0 && sig2 == 0xFFFF) {
+      size_t p = data_off + 20;
+      std::string s_name;
+      while (p < file_len && buffer[p] != '\0') s_name += static_cast<char>(buffer[p++]);
+      p++;
+      std::string dll_name;
+      while (p < file_len && buffer[p] != '\0') dll_name += static_cast<char>(buffer[p++]);
+
+      if (!s_name.empty() && !dll_name.empty()) {
+        import_symbols[s_name] = dll_name;
+        if (s_name.rfind("__imp_", 0) == 0) {
+          import_symbols[s_name.substr(6)] = dll_name;
+        }
+      }
+    }
+  };
+
+  size_t offset = 8;
+  while (offset + 60 <= file_len) {
+    const char *hdr = reinterpret_cast<const char *>(buffer.data() + offset);
+    std::string name_str(hdr, 16);
+    std::string size_str(hdr + 48, 10);
+    size_t member_size = 0;
+    try {
+      member_size = std::stoul(size_str);
+    } catch (...) {
+      break;
+    }
+
+    size_t data_offset = offset + 60;
+    if (data_offset + member_size > file_len) break;
+
+    // Check member for Short Import Header directly
+    check_short_import(data_offset);
+
+    // If First Linker Member ("/" or "/ ")
+    if (name_str.rfind("/ ", 0) == 0 || name_str.rfind("/", 0) == 0) {
+      if (member_size >= 4) {
+        uint32_t num_syms = read_u32_be(buffer.data() + data_offset);
+        if (member_size >= 4 + num_syms * 4) {
+          for (uint32_t i = 0; i < num_syms; ++i) {
+            uint32_t mem_off = read_u32_be(buffer.data() + data_offset + 4 + i * 4);
+            if (mem_off + 60 <= file_len) {
+              check_short_import(mem_off + 60);
+            }
+          }
+        }
+      }
+    }
+
+    offset = data_offset + align_up(static_cast<uint32_t>(member_size), 2);
+  }
+
+  return true;
+}
 
 bool InternalPELinker::link(AssembledModule module,
                             const std::string &output_filepath,
-                            std::string &error_msg) {
+                            std::string &error_msg,
+                            const LinkerConfig &config) {
   // Ensure main exists
   if (module.symbol_offsets.find("main") == module.symbol_offsets.end()) {
     error_msg = "Linker error: undefined symbol 'main'";
@@ -127,17 +331,90 @@ bool InternalPELinker::link(AssembledModule module,
   // Always import ExitProcess for clean exit
   module.external_symbols.insert("ExitProcess");
 
-  // Group imported symbols into DLLs:
-  // KERNEL32.dll -> ExitProcess
-  // msvcrt.dll   -> all other C library symbols (puts, printf, putchar, etc.)
-  std::vector<std::string> kernel32_syms;
-  std::vector<std::string> msvcrt_syms;
+  // Map of external symbol -> target DLL
+  std::unordered_map<std::string, std::string> sym_to_dll;
+  sym_to_dll["ExitProcess"] = "KERNEL32.dll";
 
+  // 1. Explicit imports (--import dll:func)
+  for (const auto &pair : config.explicit_imports) {
+    sym_to_dll[pair.first] = pair.second;
+  }
+
+  // 2. Build library search directories
+  std::vector<std::string> search_dirs = config.lib_dirs;
+  search_dirs.push_back(".");
+  search_dirs.push_back("C:\\Windows\\System32");
+
+  // 3. Process COFF .lib archives from config.lib_files
+  for (const auto &lib_file : config.lib_files) {
+    std::string err;
+    std::unordered_map<std::string, std::string> archive_imports;
+    if (read_coff_archive(lib_file, archive_imports, err)) {
+      for (const auto &pair : archive_imports) {
+        if (module.external_symbols.count(pair.first)) {
+          sym_to_dll[pair.first] = pair.second;
+        }
+      }
+    }
+  }
+
+  // Process -l<name> archives (looking for <name>.lib or lib<name>.a)
+  for (const auto &lib_name : config.lib_names) {
+    for (const auto &dir : search_dirs) {
+      std::filesystem::path p1 = std::filesystem::path(dir) / (lib_name + ".lib");
+      std::filesystem::path p2 = std::filesystem::path(dir) / ("lib" + lib_name + ".a");
+      std::string resolved;
+      if (std::filesystem::exists(p1)) resolved = p1.string();
+      else if (std::filesystem::exists(p2)) resolved = p2.string();
+
+      if (!resolved.empty()) {
+        std::string err;
+        std::unordered_map<std::string, std::string> archive_imports;
+        if (read_coff_archive(resolved, archive_imports, err)) {
+          for (const auto &pair : archive_imports) {
+            if (module.external_symbols.count(pair.first)) {
+              sym_to_dll[pair.first] = pair.second;
+            }
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  // 4. Process Direct DLLs (config.explicit_dlls and -l<name> mapped to <name>.dll)
+  std::vector<std::string> dlls_to_check = config.explicit_dlls;
+  for (const auto &name : config.lib_names) {
+    dlls_to_check.push_back(name + ".dll");
+  }
+
+  for (const auto &dll_name : dlls_to_check) {
+    std::string resolved_dll;
+    for (const auto &dir : search_dirs) {
+      std::filesystem::path p = std::filesystem::path(dir) / dll_name;
+      if (std::filesystem::exists(p)) {
+        resolved_dll = p.string();
+        break;
+      }
+    }
+
+    if (!resolved_dll.empty()) {
+      std::set<std::string> exports;
+      if (read_dll_exports(resolved_dll, exports)) {
+        std::string base_dll = std::filesystem::path(resolved_dll).filename().string();
+        for (const auto &exp : exports) {
+          if (module.external_symbols.count(exp) && sym_to_dll.find(exp) == sym_to_dll.end()) {
+            sym_to_dll[exp] = base_dll;
+          }
+        }
+      }
+    }
+  }
+
+  // 5. Default fallback for any remaining symbol: msvcrt.dll (standard CRT functions)
   for (const auto &sym : module.external_symbols) {
-    if (sym == "ExitProcess") {
-      kernel32_syms.push_back(sym);
-    } else {
-      msvcrt_syms.push_back(sym);
+    if (sym_to_dll.find(sym) == sym_to_dll.end()) {
+      sym_to_dll[sym] = "msvcrt.dll";
     }
   }
 
@@ -148,10 +425,26 @@ bool InternalPELinker::link(AssembledModule module,
     uint32_t iat_rdata_offset{0};
   };
 
-  std::vector<ImportInfo> k32_imports;
-  for (const auto &s : kernel32_syms) k32_imports.push_back({s, 0, 0});
-  std::vector<ImportInfo> crt_imports;
-  for (const auto &s : msvcrt_syms) crt_imports.push_back({s, 0, 0});
+  struct DllGroup {
+    std::string dll_name;
+    std::vector<ImportInfo> symbols;
+    uint32_t name_rdata_offset{0};
+    std::vector<uint32_t> hint_rvas;
+    uint32_t ilt_rdata_offset{0};
+    uint32_t iat_rdata_offset{0};
+  };
+
+  std::map<std::string, DllGroup> groups_map;
+  for (const auto &sym : module.external_symbols) {
+    std::string target_dll = sym_to_dll[sym];
+    groups_map[target_dll].dll_name = target_dll;
+    groups_map[target_dll].symbols.push_back({sym, 0, 0});
+  }
+
+  std::vector<DllGroup> dll_groups;
+  for (auto &pair : groups_map) {
+    dll_groups.push_back(std::move(pair.second));
+  }
 
   // 1. Emit startup code at entry: mainCRTStartup
   size_t entry_offset = module.text_bytes.size();
@@ -181,25 +474,19 @@ bool InternalPELinker::link(AssembledModule module,
   // ret
   module.text_bytes.push_back(0xC3);
 
-  // 2. Emit import thunks in .text for each external symbol
+  // 2. Emit import thunks in .text for every external symbol across all DLLs
   // Each thunk: jmp *IAT_entry(%rip) (0xFF 0x25 <disp32>)
-  for (auto &imp : k32_imports) {
-    imp.thunk_offset = module.text_bytes.size();
-    module.symbol_offsets[imp.name] = static_cast<uint32_t>(imp.thunk_offset);
-    module.text_bytes.push_back(0xFF);
-    module.text_bytes.push_back(0x25);
-    for (int i = 0; i < 4; ++i) module.text_bytes.push_back(0); // placeholder disp32
-  }
-  for (auto &imp : crt_imports) {
-    imp.thunk_offset = module.text_bytes.size();
-    module.symbol_offsets[imp.name] = static_cast<uint32_t>(imp.thunk_offset);
-    module.text_bytes.push_back(0xFF);
-    module.text_bytes.push_back(0x25);
-    for (int i = 0; i < 4; ++i) module.text_bytes.push_back(0); // placeholder disp32
+  for (auto &group : dll_groups) {
+    for (auto &imp : group.symbols) {
+      imp.thunk_offset = module.text_bytes.size();
+      module.symbol_offsets[imp.name] = static_cast<uint32_t>(imp.thunk_offset);
+      module.text_bytes.push_back(0xFF);
+      module.text_bytes.push_back(0x25);
+      for (int i = 0; i < 4; ++i) module.text_bytes.push_back(0); // placeholder disp32
+    }
   }
 
   // 3. Layout .rdata section
-  // VirtualAddress of .text is 0x1000
   uint32_t text_rva = 0x1000;
   uint32_t text_vsize = static_cast<uint32_t>(module.text_bytes.size());
   uint32_t rdata_rva = text_rva + align_up(text_vsize, 0x1000);
@@ -208,46 +495,30 @@ bool InternalPELinker::link(AssembledModule module,
   while (rdata.size() % 16 != 0) rdata.push_back(0); // align
 
   // Store DLL names in .rdata
-  uint32_t k32_name_offset = static_cast<uint32_t>(rdata.size());
-  const char k32_str[] = "KERNEL32.dll";
-  for (char c : k32_str) rdata.push_back(static_cast<uint8_t>(c));
-
-  while (rdata.size() % 16 != 0) rdata.push_back(0);
-  uint32_t crt_name_offset = static_cast<uint32_t>(rdata.size());
-  const char crt_str[] = "msvcrt.dll";
-  for (char c : crt_str) rdata.push_back(static_cast<uint8_t>(c));
-
-  // Store Hint/Name entries: uint16_t hint=0, name string, \0
-  std::vector<uint32_t> k32_hint_rvas;
-  for (const auto &imp : k32_imports) {
-    while (rdata.size() % 2 != 0) rdata.push_back(0);
-    k32_hint_rvas.push_back(rdata_rva + static_cast<uint32_t>(rdata.size()));
-    rdata.push_back(0); rdata.push_back(0); // hint = 0
-    for (char c : imp.name) rdata.push_back(static_cast<uint8_t>(c));
+  for (auto &group : dll_groups) {
+    while (rdata.size() % 16 != 0) rdata.push_back(0);
+    group.name_rdata_offset = static_cast<uint32_t>(rdata.size());
+    for (char c : group.dll_name) rdata.push_back(static_cast<uint8_t>(c));
     rdata.push_back(0);
   }
 
-  std::vector<uint32_t> crt_hint_rvas;
-  for (const auto &imp : crt_imports) {
-    while (rdata.size() % 2 != 0) rdata.push_back(0);
-    crt_hint_rvas.push_back(rdata_rva + static_cast<uint32_t>(rdata.size()));
-    rdata.push_back(0); rdata.push_back(0); // hint = 0
-    for (char c : imp.name) rdata.push_back(static_cast<uint8_t>(c));
-    rdata.push_back(0);
+  // Store Hint/Name entries for each symbol
+  for (auto &group : dll_groups) {
+    group.hint_rvas.clear();
+    for (const auto &imp : group.symbols) {
+      while (rdata.size() % 2 != 0) rdata.push_back(0);
+      group.hint_rvas.push_back(rdata_rva + static_cast<uint32_t>(rdata.size()));
+      rdata.push_back(0); rdata.push_back(0); // hint = 0
+      for (char c : imp.name) rdata.push_back(static_cast<uint8_t>(c));
+      rdata.push_back(0);
+    }
   }
 
   // ILT (Import Lookup Tables)
-  while (rdata.size() % 8 != 0) rdata.push_back(0);
-  uint32_t k32_ilt_offset = static_cast<uint32_t>(rdata.size());
-  for (uint32_t hrva : k32_hint_rvas) {
-    uint64_t val = hrva;
-    for (int b = 0; b < 8; ++b) rdata.push_back(static_cast<uint8_t>((val >> (b * 8)) & 0xFF));
-  }
-  for (int b = 0; b < 8; ++b) rdata.push_back(0); // null terminator
-
-  uint32_t crt_ilt_offset = static_cast<uint32_t>(rdata.size());
-  if (!crt_imports.empty()) {
-    for (uint32_t hrva : crt_hint_rvas) {
+  for (auto &group : dll_groups) {
+    while (rdata.size() % 8 != 0) rdata.push_back(0);
+    group.ilt_rdata_offset = static_cast<uint32_t>(rdata.size());
+    for (uint32_t hrva : group.hint_rvas) {
       uint64_t val = hrva;
       for (int b = 0; b < 8; ++b) rdata.push_back(static_cast<uint8_t>((val >> (b * 8)) & 0xFF));
     }
@@ -258,22 +529,15 @@ bool InternalPELinker::link(AssembledModule module,
   while (rdata.size() % 8 != 0) rdata.push_back(0);
   uint32_t iat_start_offset = static_cast<uint32_t>(rdata.size());
 
-  uint32_t k32_iat_offset = static_cast<uint32_t>(rdata.size());
-  for (size_t i = 0; i < k32_imports.size(); ++i) {
-    k32_imports[i].iat_rdata_offset = static_cast<uint32_t>(rdata.size());
-    uint64_t val = k32_hint_rvas[i];
-    for (int b = 0; b < 8; ++b) rdata.push_back(static_cast<uint8_t>((val >> (b * 8)) & 0xFF));
-  }
-  for (int b = 0; b < 8; ++b) rdata.push_back(0);
-
-  uint32_t crt_iat_offset = static_cast<uint32_t>(rdata.size());
-  if (!crt_imports.empty()) {
-    for (size_t i = 0; i < crt_imports.size(); ++i) {
-      crt_imports[i].iat_rdata_offset = static_cast<uint32_t>(rdata.size());
-      uint64_t val = crt_hint_rvas[i];
+  for (auto &group : dll_groups) {
+    while (rdata.size() % 8 != 0) rdata.push_back(0);
+    group.iat_rdata_offset = static_cast<uint32_t>(rdata.size());
+    for (size_t i = 0; i < group.symbols.size(); ++i) {
+      group.symbols[i].iat_rdata_offset = static_cast<uint32_t>(rdata.size());
+      uint64_t val = group.hint_rvas[i];
       for (int b = 0; b < 8; ++b) rdata.push_back(static_cast<uint8_t>((val >> (b * 8)) & 0xFF));
     }
-    for (int b = 0; b < 8; ++b) rdata.push_back(0);
+    for (int b = 0; b < 8; ++b) rdata.push_back(0); // null terminator
   }
   uint32_t iat_size = static_cast<uint32_t>(rdata.size() - iat_start_offset);
 
@@ -281,38 +545,32 @@ bool InternalPELinker::link(AssembledModule module,
   while (rdata.size() % 16 != 0) rdata.push_back(0);
   uint32_t import_dir_offset = static_cast<uint32_t>(rdata.size());
 
-  int num_descriptors = crt_imports.empty() ? 2 : 3; // +1 for null descriptor
-  std::vector<ImportDescriptor> descriptors(num_descriptors);
-
-  // Descriptor 0: KERNEL32.dll
-  descriptors[0].OriginalFirstThunk = rdata_rva + k32_ilt_offset;
-  descriptors[0].Name = rdata_rva + k32_name_offset;
-  descriptors[0].FirstThunk = rdata_rva + k32_iat_offset;
-
-  // Descriptor 1: msvcrt.dll (if any)
-  if (!crt_imports.empty()) {
-    descriptors[1].OriginalFirstThunk = rdata_rva + crt_ilt_offset;
-    descriptors[1].Name = rdata_rva + crt_name_offset;
-    descriptors[1].FirstThunk = rdata_rva + crt_iat_offset;
+  std::vector<ImportDescriptor> descriptors(dll_groups.size() + 1); // +1 null descriptor
+  for (size_t i = 0; i < dll_groups.size(); ++i) {
+    descriptors[i].OriginalFirstThunk = rdata_rva + dll_groups[i].ilt_rdata_offset;
+    descriptors[i].Name = rdata_rva + dll_groups[i].name_rdata_offset;
+    descriptors[i].FirstThunk = rdata_rva + dll_groups[i].iat_rdata_offset;
   }
+  uint32_t import_dir_size = static_cast<uint32_t>(descriptors.size() * sizeof(ImportDescriptor));
 
-  for (const auto &d : descriptors) {
-    const uint8_t *p = reinterpret_cast<const uint8_t *>(&d);
-    for (size_t i = 0; i < sizeof(d); ++i) rdata.push_back(p[i]);
+  for (const auto &desc : descriptors) {
+    const uint8_t *p = reinterpret_cast<const uint8_t *>(&desc);
+    for (size_t b = 0; b < sizeof(ImportDescriptor); ++b) {
+      rdata.push_back(p[b]);
+    }
   }
-  uint32_t import_dir_size = static_cast<uint32_t>(num_descriptors * sizeof(ImportDescriptor));
 
   // 4. Resolve relocations
   for (const auto &reloc : module.relocations) {
     if (reloc.type == RelocType::Rel32_Code) {
       auto it = module.symbol_offsets.find(reloc.symbol);
       if (it == module.symbol_offsets.end()) {
-        error_msg = "Linker error: unresolved symbol '" + reloc.symbol + "'";
+        error_msg = "Linker error: undefined code symbol '" + reloc.symbol + "'";
         return false;
       }
-      int32_t target_offset = static_cast<int32_t>(it->second);
-      int32_t next_ip = static_cast<int32_t>(reloc.text_offset + 4);
-      int32_t disp = target_offset - next_ip;
+      uint32_t target_rva = text_rva + it->second;
+      uint32_t next_rva = text_rva + static_cast<uint32_t>(reloc.text_offset + 4);
+      int32_t disp = static_cast<int32_t>(target_rva - next_rva);
       write_int32_le(module.text_bytes, reloc.text_offset, disp);
     } else if (reloc.type == RelocType::Rip_Data) {
       auto it = module.data_offsets.find(reloc.symbol);
@@ -328,17 +586,13 @@ bool InternalPELinker::link(AssembledModule module,
   }
 
   // Fix up import thunks (jmp *IAT(%rip))
-  for (const auto &imp : k32_imports) {
-    uint32_t iat_rva = rdata_rva + imp.iat_rdata_offset;
-    uint32_t next_rva = text_rva + static_cast<uint32_t>(imp.thunk_offset + 6);
-    int32_t disp = static_cast<int32_t>(iat_rva - next_rva);
-    write_int32_le(module.text_bytes, imp.thunk_offset + 2, disp);
-  }
-  for (const auto &imp : crt_imports) {
-    uint32_t iat_rva = rdata_rva + imp.iat_rdata_offset;
-    uint32_t next_rva = text_rva + static_cast<uint32_t>(imp.thunk_offset + 6);
-    int32_t disp = static_cast<int32_t>(iat_rva - next_rva);
-    write_int32_le(module.text_bytes, imp.thunk_offset + 2, disp);
+  for (const auto &group : dll_groups) {
+    for (const auto &imp : group.symbols) {
+      uint32_t iat_rva = rdata_rva + imp.iat_rdata_offset;
+      uint32_t next_rva = text_rva + static_cast<uint32_t>(imp.thunk_offset + 6);
+      int32_t disp = static_cast<int32_t>(iat_rva - next_rva);
+      write_int32_le(module.text_bytes, imp.thunk_offset + 2, disp);
+    }
   }
 
   // 5. Build PE file structures
@@ -361,60 +615,62 @@ bool InternalPELinker::link(AssembledModule module,
   opt_hdr.SizeOfImage = rdata_rva + align_up(static_cast<uint32_t>(rdata.size()), 0x1000);
   opt_hdr.SizeOfHeaders = headers_size;
 
-  // Import Directory data directory (index 1)
+  // Data Directory: Import Table (Index 1)
   opt_hdr.DataDirectory[1].VirtualAddress = rdata_rva + import_dir_offset;
   opt_hdr.DataDirectory[1].Size = import_dir_size;
 
-  // IAT data directory (index 12)
+  // Data Directory: IAT (Index 12)
   opt_hdr.DataDirectory[12].VirtualAddress = rdata_rva + iat_start_offset;
   opt_hdr.DataDirectory[12].Size = iat_size;
 
+  // Section Headers
   SectionHeader sec_text;
   std::memcpy(sec_text.Name, ".text", 5);
-  sec_text.VirtualSize = text_vsize;
+  sec_text.VirtualSize = static_cast<uint32_t>(module.text_bytes.size());
   sec_text.VirtualAddress = text_rva;
   sec_text.SizeOfRawData = text_raw_size;
-  sec_text.PointerToRawData = headers_size;
-  sec_text.Characteristics = 0x60000020; // Code | Executable | Read
+  sec_text.PointerToRawData = 0x400;
+  sec_text.Characteristics = 0x60000020; // CNT_CODE | MEM_EXECUTE | MEM_READ
 
   SectionHeader sec_rdata;
   std::memcpy(sec_rdata.Name, ".rdata", 6);
   sec_rdata.VirtualSize = static_cast<uint32_t>(rdata.size());
   sec_rdata.VirtualAddress = rdata_rva;
   sec_rdata.SizeOfRawData = rdata_raw_size;
-  sec_rdata.PointerToRawData = headers_size + text_raw_size;
-  sec_rdata.Characteristics = 0x40000040; // InitializedData | Read
+  sec_rdata.PointerToRawData = 0x400 + text_raw_size;
+  sec_rdata.Characteristics = 0x40000040; // CNT_INITIALIZED_DATA | MEM_READ
 
-  // 6. Write executable file
+  // Write out binary
   std::ofstream out(output_filepath, std::ios::binary);
   if (!out.is_open()) {
-    error_msg = "Linker error: could not open output file '" + output_filepath + "' for writing.";
+    error_msg = "Failed to open output file for writing: " + output_filepath;
     return false;
   }
 
-  out.write(reinterpret_cast<const char *>(&dos), sizeof(dos));
+  std::vector<uint8_t> header_bytes(headers_size, 0);
 
-  std::vector<char> stub(0x80 - sizeof(dos), 0);
-  out.write(stub.data(), stub.size());
+  // DOS Header at 0x00
+  std::memcpy(header_bytes.data(), &dos, sizeof(dos));
 
-  const char pe_sig[4] = {'P', 'E', 0, 0};
-  out.write(pe_sig, 4);
+  // PE Header at 0x80
+  uint32_t pe_sig = 0x00004550; // "PE\0\0"
+  std::memcpy(header_bytes.data() + 0x80, &pe_sig, 4);
+  std::memcpy(header_bytes.data() + 0x84, &file_hdr, sizeof(file_hdr));
+  std::memcpy(header_bytes.data() + 0x98, &opt_hdr, sizeof(opt_hdr));
 
-  out.write(reinterpret_cast<const char *>(&file_hdr), sizeof(file_hdr));
-  out.write(reinterpret_cast<const char *>(&opt_hdr), sizeof(opt_hdr));
+  // Section headers at 0x98 + sizeof(OptionalHeader64)
+  size_t sec_offset = 0x98 + sizeof(OptionalHeader64);
+  std::memcpy(header_bytes.data() + sec_offset, &sec_text, sizeof(sec_text));
+  std::memcpy(header_bytes.data() + sec_offset + sizeof(sec_text), &sec_rdata, sizeof(sec_rdata));
 
-  out.write(reinterpret_cast<const char *>(&sec_text), sizeof(sec_text));
-  out.write(reinterpret_cast<const char *>(&sec_rdata), sizeof(sec_rdata));
-
-  std::streampos pos = out.tellp();
-  if (static_cast<uint32_t>(pos) < headers_size) {
-    std::vector<char> pad(headers_size - static_cast<uint32_t>(pos), 0);
-    out.write(pad.data(), pad.size());
-  }
-
+  out.write(reinterpret_cast<const char *>(header_bytes.data()), header_bytes.size());
   out.write(reinterpret_cast<const char *>(module.text_bytes.data()), module.text_bytes.size());
   out.write(reinterpret_cast<const char *>(rdata.data()), rdata.size());
 
-  out.close();
+  if (!out.good()) {
+    error_msg = "Error writing binary executable data to: " + output_filepath;
+    return false;
+  }
+
   return true;
 }

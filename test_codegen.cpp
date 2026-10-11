@@ -4,6 +4,7 @@
 #include "parser.hpp"
 #include <cassert>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -1237,6 +1238,117 @@ static void test_inline_asm_codegen() {
   }
 }
 
+static void test_linker_libraries() {
+  std::cout << "Testing Linker Library Ingestion (-l, direct DLL, and .lib archives)...\n";
+
+  // 1. Direct DLL export parsing (kernel32.dll)
+  {
+    std::set<std::string> exports;
+    bool ok = InternalPELinker::read_dll_exports("C:\\Windows\\System32\\kernel32.dll", exports);
+    assert(ok);
+    assert(exports.count("ExitProcess") > 0);
+    assert(exports.count("GetStdHandle") > 0);
+  }
+
+  // 2. Direct DLL export parsing (user32.dll)
+  {
+    std::set<std::string> exports;
+    bool ok = InternalPELinker::read_dll_exports("C:\\Windows\\System32\\user32.dll", exports);
+    assert(ok);
+    assert(exports.count("MessageBoxA") > 0);
+  }
+
+  // 3. Link with -luser32
+  {
+    auto x86_linker = AssemblerLinkerFactory::create("x86_64");
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse("int MessageBoxA(void* hwnd, char* text, char* caption, int type);\n"
+                      "int main() {\n"
+                      "  return 0;\n"
+                      "}\n");
+    std::string asm_code = gen->generate_to_string(*prog);
+
+    LinkerConfig config;
+    config.lib_names.push_back("user32");
+    x86_linker->set_linker_config(config);
+
+    std::string exe_path = "test_user32_link.exe";
+    auto res = x86_linker->assemble_and_link(asm_code, exe_path);
+    assert(res.success);
+    assert(std::filesystem::exists(exe_path));
+
+    int code = std::system(".\\test_user32_link.exe");
+    assert(code == 0);
+
+    std::error_code ec;
+    std::filesystem::remove(exe_path, ec);
+  }
+
+  // 4. COFF Archive (.lib) parsing
+  {
+    std::string test_lib = "test_mock.lib";
+    std::ofstream out(test_lib, std::ios::binary);
+    // !<arch>\n
+    out.write("!<arch>\n", 8);
+
+    // 60-byte member header
+    std::string hdr(60, ' ');
+    std::string name = "test.obj/";
+    std::copy(name.begin(), name.end(), hdr.begin());
+    // member size: 20 bytes short import + "mock_func\0" (10) + "mock.dll\0" (9) = 39 bytes
+    std::string size_str = "39        ";
+    std::copy(size_str.begin(), size_str.end(), hdr.begin() + 48);
+    hdr[58] = '`';
+    hdr[59] = '\n';
+    out.write(hdr.data(), 60);
+
+    // Short import header: sig1=0, sig2=0xFFFF
+    uint16_t sig1 = 0;
+    uint16_t sig2 = 0xFFFF;
+    uint16_t ver = 0;
+    uint16_t machine = 0x8664;
+    uint32_t timestamp = 0;
+    uint32_t data_sz = 0;
+    uint16_t hint = 0;
+    uint16_t type = 0;
+    out.write(reinterpret_cast<char *>(&sig1), 2);
+    out.write(reinterpret_cast<char *>(&sig2), 2);
+    out.write(reinterpret_cast<char *>(&ver), 2);
+    out.write(reinterpret_cast<char *>(&machine), 2);
+    out.write(reinterpret_cast<char *>(&timestamp), 4);
+    out.write(reinterpret_cast<char *>(&data_sz), 4);
+    out.write(reinterpret_cast<char *>(&hint), 2);
+    out.write(reinterpret_cast<char *>(&type), 2);
+
+    const char sym[] = "mock_func";
+    const char dll[] = "mock.dll";
+    out.write(sym, sizeof(sym));
+    out.write(dll, sizeof(dll));
+    out.close();
+
+    std::unordered_map<std::string, std::string> imports;
+    std::string err;
+    bool ok = InternalPELinker::read_coff_archive(test_lib, imports, err);
+    assert(ok);
+    assert(imports["mock_func"] == "mock.dll");
+
+    std::error_code ec;
+    std::filesystem::remove(test_lib, ec);
+  }
+
+  // 5. Test real SDK kernel32.Lib if present on system
+  {
+    std::string sdk_lib = "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.26100.0\\um\\x64\\kernel32.Lib";
+    if (std::filesystem::exists(sdk_lib)) {
+      std::unordered_map<std::string, std::string> imports;
+      std::string err;
+      bool ok = InternalPELinker::read_coff_archive(sdk_lib, imports, err);
+      assert(ok);
+      assert(imports.count("ExitProcess") > 0);
+    }
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Code Generator Test Suite\n";
@@ -1258,9 +1370,10 @@ int main() {
   test_char_and_string_literals_codegen();
   test_assembler_linker();
   test_inline_asm_codegen();
+  test_linker_libraries();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL CODEGEN TESTS PASSED! (16/16)\n";
+  std::cout << "  ALL CODEGEN TESTS PASSED! (17/17)\n";
   std::cout << "========================================\n";
   return 0;
 }

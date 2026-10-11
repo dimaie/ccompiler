@@ -10,7 +10,7 @@
 #include <vector>
 
 static void print_usage(const char *prog_name) {
-  std::cerr << "Usage: " << prog_name << " [options] <source_file>\n\n"
+  std::cerr << "Usage: " << prog_name << " [options] <source_file> [libraries...]\n\n"
             << "Options:\n"
             << "  -t, --target <arch>    Target architecture (x86_64, arm64, avr, c) [default: x86_64]\n"
             << "  -o, --output <file>    Output file [default: a.exe (Windows) / a.out]\n"
@@ -18,6 +18,9 @@ static void print_usage(const char *prog_name) {
             << "  -E                     Stop after preprocessing phase; output preprocessed source\n"
             << "  -I <dir>               Add directory to include search path\n"
             << "  -D <macro>[=val]       Define preprocessor macro\n"
+            << "  -l<lib>                Link against library archive or DLL (e.g. -luser32)\n"
+            << "  -L<dir>                Add directory to library search path\n"
+            << "  --import <dll:func>    Explicitly map symbol to DLL (e.g. --import user32.dll:MessageBoxA)\n"
             << "  --ast                  Print AST to stdout\n"
             << "  -h, --help             Display this help message\n";
 }
@@ -31,6 +34,7 @@ int main(int argc, char *argv[]) {
   bool preprocess_only = false;
   std::vector<std::string> include_dirs;
   std::vector<std::string> defined_macros;
+  LinkerConfig linker_config;
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
@@ -59,6 +63,46 @@ int main(int argc, char *argv[]) {
       defined_macros.push_back(argv[++i]);
     } else if (arg.rfind("-D", 0) == 0 && arg.size() > 2) {
       defined_macros.push_back(arg.substr(2));
+    } else if (arg == "-l") {
+      if (i + 1 >= argc) {
+        std::cerr << "Error: Missing argument for -l\n";
+        return 1;
+      }
+      linker_config.lib_names.push_back(argv[++i]);
+    } else if (arg.rfind("-l", 0) == 0 && arg.size() > 2) {
+      linker_config.lib_names.push_back(arg.substr(2));
+    } else if (arg == "-L") {
+      if (i + 1 >= argc) {
+        std::cerr << "Error: Missing argument for -L\n";
+        return 1;
+      }
+      linker_config.lib_dirs.push_back(argv[++i]);
+    } else if (arg.rfind("-L", 0) == 0 && arg.size() > 2) {
+      linker_config.lib_dirs.push_back(arg.substr(2));
+    } else if (arg == "--import") {
+      if (i + 1 >= argc) {
+        std::cerr << "Error: Missing argument for --import\n";
+        return 1;
+      }
+      std::string spec = argv[++i];
+      size_t eq = spec.find('=');
+      size_t colon = spec.find(':');
+      if (eq != std::string::npos) {
+        linker_config.explicit_imports[spec.substr(0, eq)] = spec.substr(eq + 1);
+      } else if (colon != std::string::npos) {
+        std::string p1 = spec.substr(0, colon);
+        std::string p2 = spec.substr(colon + 1);
+        std::string p1_lower = p1;
+        for (char &c : p1_lower) c = std::tolower(c);
+        if (p1_lower.rfind(".dll") != std::string::npos) {
+          linker_config.explicit_imports[p2] = p1;
+        } else {
+          linker_config.explicit_imports[p1] = p2;
+        }
+      } else {
+        std::cerr << "Error: Invalid format for --import. Expected <dll:symbol> or <symbol=dll>\n";
+        return 1;
+      }
     } else if (arg == "-t" || arg == "--target") {
       if (i + 1 >= argc) {
         std::cerr << "Error: Missing argument for " << arg << "\n";
@@ -72,12 +116,22 @@ int main(int argc, char *argv[]) {
       }
       output_filename = argv[++i];
     } else if (arg == "-" || (!arg.empty() && arg[0] != '-')) {
-      if (!input_filename.empty()) {
-        std::cerr << "Error: Multiple input files specified ('"
-                  << input_filename << "' and '" << arg << "')\n";
-        return 1;
+      std::string lower = arg;
+      for (char &c : lower) c = std::tolower(c);
+      if (lower.size() > 4 && lower.substr(lower.size() - 4) == ".lib") {
+        linker_config.lib_files.push_back(arg);
+      } else if (lower.size() > 2 && lower.substr(lower.size() - 2) == ".a") {
+        linker_config.lib_files.push_back(arg);
+      } else if (lower.size() > 4 && lower.substr(lower.size() - 4) == ".dll") {
+        linker_config.explicit_dlls.push_back(arg);
+      } else {
+        if (!input_filename.empty()) {
+          std::cerr << "Error: Multiple input files specified ('"
+                    << input_filename << "' and '" << arg << "')\n";
+          return 1;
+        }
+        input_filename = arg;
       }
-      input_filename = arg;
     } else {
       std::cerr << "Error: Unknown option '" << arg << "'\n";
       print_usage(argv[0]);
@@ -218,6 +272,7 @@ int main(int argc, char *argv[]) {
 #endif
     }
 
+    linker->set_linker_config(linker_config);
     auto link_res = linker->assemble_and_link(generated_out.str(), exe_path);
     if (!link_res.success) {
       std::cerr << "Error: " << link_res.message << "\n";
