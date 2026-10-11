@@ -1,6 +1,7 @@
 #include "assembler_linker.hpp"
 #include "codegen.hpp"
 #include "compiler_config.hpp"
+#include "x86_64/internal_elf_linker.hpp"
 #include "lexer.hpp"
 #include "parser.hpp"
 #include <cassert>
@@ -1906,6 +1907,185 @@ static void test_multi_module_compilation_and_linking() {
   }
 }
 
+static void test_debug_information_codegen() {
+  std::cout << "Testing Debug Information Generation (-g / -g0 / --no-debug)...\n";
+
+  auto prog = parse("int main() {\n"
+                    "  int a = 10;\n"
+                    "  int b = 20;\n"
+                    "  return a + b;\n"
+                    "}\n");
+
+  // 1. x86_64 target
+  {
+    auto x86_gen = CodeGeneratorFactory::create("x86_64");
+    x86_gen->set_source_filename("test_debug.c");
+    assert(x86_gen->get_emit_debug_info() == true);
+
+    std::string asm_dbg = x86_gen->generate_to_string(*prog);
+    assert(asm_dbg.find(".file 1 \"test_debug.c\"") != std::string::npos);
+    assert(asm_dbg.find(".loc 1 1 0") != std::string::npos);
+    assert(asm_dbg.find(".loc 1 2 0") != std::string::npos);
+    assert(asm_dbg.find(".loc 1 4 0") != std::string::npos);
+
+    // Excluded with emit_debug_info = false (-g0)
+    x86_gen->set_emit_debug_info(false);
+    std::string asm_no_dbg = x86_gen->generate_to_string(*prog);
+    assert(asm_no_dbg.find(".file") == std::string::npos);
+    assert(asm_no_dbg.find(".loc") == std::string::npos);
+  }
+
+  // 2. AVR target
+  {
+    auto avr_gen = CodeGeneratorFactory::create("avr");
+    avr_gen->set_source_filename("blink.c");
+    assert(avr_gen->get_emit_debug_info() == true);
+
+    std::string avr_dbg = avr_gen->generate_to_string(*prog);
+    assert(avr_dbg.find(".file 1 \"blink.c\"") != std::string::npos);
+    assert(avr_dbg.find(".loc 1 1 0") != std::string::npos);
+    assert(avr_dbg.find(".loc 1 2 0") != std::string::npos);
+    assert(avr_dbg.find(".loc 1 4 0") != std::string::npos);
+
+    // Excluded with emit_debug_info = false (-g0)
+    avr_gen->set_emit_debug_info(false);
+    std::string avr_no_dbg = avr_gen->generate_to_string(*prog);
+    assert(avr_no_dbg.find(".file") == std::string::npos);
+    assert(avr_no_dbg.find(".loc") == std::string::npos);
+  }
+
+  // 3. ARM64 target
+  {
+    auto arm_gen = CodeGeneratorFactory::create("arm64");
+    arm_gen->set_source_filename("arm_app.c");
+    assert(arm_gen->get_emit_debug_info() == true);
+
+    std::string arm_dbg = arm_gen->generate_to_string(*prog);
+    assert(arm_dbg.find(".file 1 \"arm_app.c\"") != std::string::npos);
+    assert(arm_dbg.find(".loc 1 1 0") != std::string::npos);
+    assert(arm_dbg.find(".loc 1 2 0") != std::string::npos);
+    assert(arm_dbg.find(".loc 1 4 0") != std::string::npos);
+
+    // Excluded with emit_debug_info = false (-g0)
+    arm_gen->set_emit_debug_info(false);
+    std::string arm_no_dbg = arm_gen->generate_to_string(*prog);
+    assert(arm_no_dbg.find(".file") == std::string::npos);
+    assert(arm_no_dbg.find(".loc") == std::string::npos);
+  }
+
+  // 4. Command Line Parser flags (-g, -g0, --no-debug, -s, --strip)
+  {
+    CommandLineParser parser;
+    std::string err;
+    bool help = false;
+
+    // Default: enabled
+    CompilerConfig cfg1;
+    assert(parser.parse({"main.c"}, cfg1, err, help));
+    assert(cfg1.codegen.emit_debug_info == true);
+    assert(cfg1.general.emit_debug_info == true);
+
+    // -g0: disabled
+    CompilerConfig cfg2;
+    assert(parser.parse({"-g0", "main.c"}, cfg2, err, help));
+    assert(cfg2.codegen.emit_debug_info == false);
+    assert(cfg2.general.emit_debug_info == false);
+
+    // --no-debug: disabled
+    CompilerConfig cfg3;
+    assert(parser.parse({"--no-debug", "main.c"}, cfg3, err, help));
+    assert(cfg3.codegen.emit_debug_info == false);
+
+    // -g explicit: enabled
+    CompilerConfig cfg4;
+    assert(parser.parse({"-g", "main.c"}, cfg4, err, help));
+    assert(cfg4.codegen.emit_debug_info == true);
+
+    // -s / --strip: disabled
+    CompilerConfig cfg5;
+    assert(parser.parse({"-s", "main.c"}, cfg5, err, help));
+    assert(cfg5.codegen.emit_debug_info == false);
+  }
+
+  // 5. Internal Assembler .file and .loc parsing
+  {
+    X86_64InternalAssembler asm_eng;
+    std::string sample_asm =
+        "    .file 1 \"test_mod.c\"\n"
+        ".globl main\n"
+        "main:\n"
+        "    .loc 1 10 0\n"
+        "    movq $42, %rax\n"
+        "    ret\n";
+    AssembledModule mod = asm_eng.assemble(sample_asm);
+    assert(mod.file_table.count(1) > 0);
+    assert(mod.file_table[1] == "test_mod.c");
+    assert(!mod.source_locs.empty());
+    assert(mod.source_locs[0].line == 10);
+    assert(mod.source_locs[0].file_id == 1);
+
+    // 6. Internal PE Linker emission of DWARF sections and symbols
+    std::string pe_out = "build_test_debug.exe";
+    std::string err;
+    LinkerConfig cfg;
+    bool pe_ok = InternalPELinker::link(mod, pe_out, err, cfg);
+    assert(pe_ok);
+    std::ifstream pe_file(pe_out, std::ios::binary);
+    assert(pe_file.is_open());
+    std::vector<char> pe_bytes((std::istreambuf_iterator<char>(pe_file)), std::istreambuf_iterator<char>());
+    pe_file.close();
+    std::filesystem::remove(pe_out);
+    std::string pe_data(pe_bytes.begin(), pe_bytes.end());
+    assert(pe_data.find(".debug_line") != std::string::npos);
+    assert(pe_data.find(".debug_info") != std::string::npos);
+    assert(pe_data.find(".debug_abbrev") != std::string::npos);
+
+    // Verify stripped PE linker output
+    cfg.strip_debug_info = true;
+    std::string pe_stripped = "build_test_stripped.exe";
+    pe_ok = InternalPELinker::link(mod, pe_stripped, err, cfg);
+    assert(pe_ok);
+    std::ifstream pe_str_file(pe_stripped, std::ios::binary);
+    assert(pe_str_file.is_open());
+    std::vector<char> pe_str_bytes((std::istreambuf_iterator<char>(pe_str_file)), std::istreambuf_iterator<char>());
+    pe_str_file.close();
+    std::filesystem::remove(pe_stripped);
+    std::string pe_str_data(pe_str_bytes.begin(), pe_str_bytes.end());
+    assert(pe_str_data.find(".debug_line") == std::string::npos);
+    assert(pe_str_data.find(".debug_info") == std::string::npos);
+
+    // 7. Internal ELF Linker emission of DWARF sections
+    std::string elf_out = "build_test_debug.elf";
+    LinkerConfig elf_cfg;
+    std::vector<AssembledModule> elf_mods = {mod};
+    bool elf_ok = InternalElfLinker::link(elf_mods, elf_out, err, elf_cfg);
+    assert(elf_ok);
+    std::ifstream elf_file(elf_out, std::ios::binary);
+    assert(elf_file.is_open());
+    std::vector<char> elf_bytes((std::istreambuf_iterator<char>(elf_file)), std::istreambuf_iterator<char>());
+    elf_file.close();
+    std::filesystem::remove(elf_out);
+    std::string elf_data(elf_bytes.begin(), elf_bytes.end());
+    assert(elf_data.find(".debug_line") != std::string::npos);
+    assert(elf_data.find(".debug_info") != std::string::npos);
+    assert(elf_data.find(".debug_abbrev") != std::string::npos);
+
+    // Verify stripped ELF linker output
+    elf_cfg.strip_debug_info = true;
+    std::string elf_stripped = "build_test_stripped.elf";
+    elf_ok = InternalElfLinker::link(elf_mods, elf_stripped, err, elf_cfg);
+    assert(elf_ok);
+    std::ifstream elf_str_file(elf_stripped, std::ios::binary);
+    assert(elf_str_file.is_open());
+    std::vector<char> elf_str_bytes((std::istreambuf_iterator<char>(elf_str_file)), std::istreambuf_iterator<char>());
+    elf_str_file.close();
+    std::filesystem::remove(elf_stripped);
+    std::string elf_str_data(elf_str_bytes.begin(), elf_str_bytes.end());
+    assert(elf_str_data.find(".debug_line") == std::string::npos);
+    assert(elf_str_data.find(".debug_info") == std::string::npos);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Code Generator Test Suite\n";
@@ -1932,9 +2112,10 @@ int main() {
   test_local_var_storage_options();
   test_command_line_parser();
   test_multi_module_compilation_and_linking();
+  test_debug_information_codegen();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL CODEGEN TESTS PASSED! (21/21)\n";
+  std::cout << "  ALL CODEGEN TESTS PASSED! (22/22)\n";
   std::cout << "========================================\n";
   return 0;
 }

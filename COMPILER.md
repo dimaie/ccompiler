@@ -253,7 +253,9 @@ Usage: c_compiler [options] <source_files...> [libraries...]
 | **`-D`** | `<macro>[=val]`| Define preprocessor macro (defaults to `1` if `=val` omitted) | — |
 | **`-l`** | `<lib>` | Link library name (e.g. `-luser32`) | — |
 | **`-L`** | `<dir>` | Add directory to library search path | — |
-| **`--import`** | `<dll:func>` | Explicitly map symbol to DLL (e.g. `--import user32.dll:MessageBoxA`)| — |
+| **`-g, -g2, -g3`** | — | Emit source debug info (`.file` and `.loc` DWARF line mapping) | `true` (enabled by default) |
+| **`-g0, --no-debug`** | — | Exclude source debug information | — |
+| **`-s, --strip`** | — | Omit debug information and strip symbol tables | — |
 | **`-h, --help`** | — | Print help and supported targets summary | — |
 
 ### Supported Targets (`-t, --target <spec>`)

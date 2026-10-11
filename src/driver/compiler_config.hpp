@@ -26,6 +26,7 @@ struct GeneralConfig {
   bool show_ast{false};
   bool show_ir{false};
   bool verbose{false};
+  bool emit_debug_info{true};
 };
 
 struct PreprocessorConfig {
@@ -35,6 +36,7 @@ struct PreprocessorConfig {
 
 struct CodeGenConfig {
   LocalVarStorage local_var_storage{LocalVarStorage::Auto};
+  bool emit_debug_info{true};
 };
 
 class CompilerConfig {
@@ -47,6 +49,8 @@ public:
   CodeGenOptions get_codegen_options() const {
     CodeGenOptions opts;
     opts.local_var_storage = codegen.local_var_storage;
+    opts.emit_debug_info = codegen.emit_debug_info;
+    opts.source_filename = general.input_filename;
     return opts;
   }
 

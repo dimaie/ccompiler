@@ -137,6 +137,29 @@ AssembledModule X86_64InternalAssembler::assemble(const std::string &assembly_so
           module.global_symbols.insert(sym);
         }
         continue;
+      } else if (dir == ".file") {
+        uint32_t fid = 1;
+        std::string next_token;
+        ls >> next_token;
+        if (!next_token.empty() && std::isdigit(static_cast<unsigned char>(next_token[0]))) {
+          fid = static_cast<uint32_t>(std::stoul(next_token));
+        }
+        size_t q1 = line.find('"');
+        size_t q2 = line.rfind('"');
+        if (q1 != std::string::npos && q2 != std::string::npos && q2 > q1) {
+          module.file_table[fid] = line.substr(q1 + 1, q2 - q1 - 1);
+        }
+        continue;
+      } else if (dir == ".loc") {
+        uint32_t fid = 1;
+        uint32_t line_num = 0;
+        uint32_t col = 0;
+        ls >> fid >> line_num;
+        if (ls >> col) {}
+        if (line_num > 0) {
+          module.source_locs.push_back({module.text_bytes.size(), fid, line_num, col});
+        }
+        continue;
       } else if (dir == ".local") {
         std::string sym;
         ls >> sym;

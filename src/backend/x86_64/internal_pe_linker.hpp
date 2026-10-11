@@ -30,6 +30,7 @@ struct LinkerConfig {
   std::vector<std::string> lib_names;     // -luser32 -> "user32"
   std::vector<std::string> explicit_dlls; // user32.dll
   std::unordered_map<std::string, std::string> explicit_imports; // symbol -> dll
+  bool strip_debug_info{false};
 };
 
 class InternalPELinker {

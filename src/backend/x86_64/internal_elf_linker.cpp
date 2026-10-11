@@ -1,4 +1,5 @@
 #include "internal_elf_linker.hpp"
+#include "dwarf_emitter.hpp"
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -84,7 +85,7 @@ InternalElfLinker::identify_target_type(const std::vector<AssembledModule> &modu
 bool InternalElfLinker::link(const std::vector<AssembledModule> &modules,
                              const std::string &output_filepath,
                              std::string &error_msg,
-                             const LinkerConfig &/*config*/,
+                             const LinkerConfig &config,
                              TargetFileType target_file_type) {
   if (modules.empty()) {
     error_msg = "Linker error: no input modules provided";
@@ -319,6 +320,16 @@ bool InternalElfLinker::link(const std::vector<AssembledModule> &modules,
       }
       combined.relocations.push_back(r);
     }
+
+    // Merge source_locs and file_table
+    for (const auto &pair : m.file_table) {
+      combined.file_table[pair.first] = pair.second;
+    }
+    for (const auto &loc : m.source_locs) {
+      SourceLoc mapped = loc;
+      mapped.text_offset += placements[i].text_offset;
+      combined.source_locs.push_back(mapped);
+    }
   }
 
   // 4. Resolve relocations
@@ -350,6 +361,38 @@ bool InternalElfLinker::link(const std::vector<AssembledModule> &modules,
     }
   }
 
+  // DWARF Debug Information (.debug_line, .debug_info, .debug_abbrev)
+  bool has_debug = !combined.source_locs.empty() && !config.strip_debug_info;
+  DwarfArtifacts dwarf;
+  if (has_debug) {
+    std::string primary_filename = "main.c";
+    for (const auto &pair : combined.file_table) {
+      if (!pair.second.empty()) {
+        primary_filename = pair.second;
+        break;
+      }
+    }
+    std::vector<DwarfFunction> dwarf_funcs;
+    std::vector<std::pair<uint32_t, std::string>> sorted_syms;
+    for (const auto &pair : combined.symbol_offsets) {
+      if (!pair.first.empty() && pair.first[0] != '.') {
+        sorted_syms.push_back({pair.second, pair.first});
+      }
+    }
+    std::sort(sorted_syms.begin(), sorted_syms.end());
+    uint32_t full_text_size = static_cast<uint32_t>(combined.text_bytes.size());
+    for (size_t i = 0; i < sorted_syms.size(); ++i) {
+      uint32_t cur_off = sorted_syms[i].first;
+      uint32_t next_off = (i + 1 < sorted_syms.size()) ? sorted_syms[i + 1].first : full_text_size;
+      uint32_t fsize = (next_off > cur_off) ? (next_off - cur_off) : 16;
+      dwarf_funcs.push_back({sorted_syms[i].second, cur_off, fsize});
+    }
+
+    uint64_t full_text_vma = TEXT_VADDR;
+    dwarf = DwarfEmitter::emit(primary_filename, combined.file_table, combined.source_locs,
+                               full_text_vma, full_text_size, dwarf_funcs);
+  }
+
   // 5. Build section header string table (.shstrtab)
   std::vector<uint8_t> shstrtab;
   shstrtab.push_back(0); // null name
@@ -361,6 +404,23 @@ bool InternalElfLinker::link(const std::vector<AssembledModule> &modules,
   uint32_t name_rodata = static_cast<uint32_t>(shstrtab.size());
   for (char c : std::string(".rodata")) shstrtab.push_back(static_cast<uint8_t>(c));
   shstrtab.push_back(0);
+
+  uint32_t name_dbg_line = 0;
+  uint32_t name_dbg_info = 0;
+  uint32_t name_dbg_abbrev = 0;
+  if (has_debug) {
+    name_dbg_line = static_cast<uint32_t>(shstrtab.size());
+    for (char c : std::string(".debug_line")) shstrtab.push_back(static_cast<uint8_t>(c));
+    shstrtab.push_back(0);
+
+    name_dbg_info = static_cast<uint32_t>(shstrtab.size());
+    for (char c : std::string(".debug_info")) shstrtab.push_back(static_cast<uint8_t>(c));
+    shstrtab.push_back(0);
+
+    name_dbg_abbrev = static_cast<uint32_t>(shstrtab.size());
+    for (char c : std::string(".debug_abbrev")) shstrtab.push_back(static_cast<uint8_t>(c));
+    shstrtab.push_back(0);
+  }
 
   uint32_t name_shstrtab = static_cast<uint32_t>(shstrtab.size());
   for (char c : std::string(".shstrtab")) shstrtab.push_back(static_cast<uint8_t>(c));
@@ -382,13 +442,33 @@ bool InternalElfLinker::link(const std::vector<AssembledModule> &modules,
   size_t data_file_offset = file_bytes.size();
   file_bytes.insert(file_bytes.end(), combined.data_bytes.begin(), combined.data_bytes.end());
 
+  size_t loadable_file_size = file_bytes.size();
+
+  size_t dbg_line_offset = 0;
+  size_t dbg_info_offset = 0;
+  size_t dbg_abbrev_offset = 0;
+  if (has_debug) {
+    dbg_line_offset = file_bytes.size();
+    file_bytes.insert(file_bytes.end(), dwarf.debug_line.begin(), dwarf.debug_line.end());
+
+    dbg_info_offset = file_bytes.size();
+    file_bytes.insert(file_bytes.end(), dwarf.debug_info.begin(), dwarf.debug_info.end());
+
+    dbg_abbrev_offset = file_bytes.size();
+    file_bytes.insert(file_bytes.end(), dwarf.debug_abbrev.begin(), dwarf.debug_abbrev.end());
+  }
+
+  // Append .shstrtab
+  size_t shstrtab_file_offset = file_bytes.size();
+  file_bytes.insert(file_bytes.end(), shstrtab.begin(), shstrtab.end());
+
   // Align to 8-byte boundary for section headers
   while (file_bytes.size() % 8 != 0) {
     file_bytes.push_back(0);
   }
 
   size_t shoff = file_bytes.size();
-  size_t num_sections = 4;
+  size_t num_sections = has_debug ? 7 : 4;
   std::vector<Elf64_Shdr> sections(num_sections);
   std::memset(sections.data(), 0, num_sections * sizeof(Elf64_Shdr));
 
@@ -410,24 +490,48 @@ bool InternalElfLinker::link(const std::vector<AssembledModule> &modules,
   sections[2].sh_size = combined.data_bytes.size();
   sections[2].sh_addralign = 16;
 
+  if (has_debug) {
+    // Section 3: .debug_line
+    sections[3].sh_name = name_dbg_line;
+    sections[3].sh_type = 1; // SHT_PROGBITS
+    sections[3].sh_flags = 0;
+    sections[3].sh_addr = 0;
+    sections[3].sh_offset = dbg_line_offset;
+    sections[3].sh_size = dwarf.debug_line.size();
+    sections[3].sh_addralign = 1;
+
+    // Section 4: .debug_info
+    sections[4].sh_name = name_dbg_info;
+    sections[4].sh_type = 1; // SHT_PROGBITS
+    sections[4].sh_flags = 0;
+    sections[4].sh_addr = 0;
+    sections[4].sh_offset = dbg_info_offset;
+    sections[4].sh_size = dwarf.debug_info.size();
+    sections[4].sh_addralign = 1;
+
+    // Section 5: .debug_abbrev
+    sections[5].sh_name = name_dbg_abbrev;
+    sections[5].sh_type = 1; // SHT_PROGBITS
+    sections[5].sh_flags = 0;
+    sections[5].sh_addr = 0;
+    sections[5].sh_offset = dbg_abbrev_offset;
+    sections[5].sh_size = dwarf.debug_abbrev.size();
+    sections[5].sh_addralign = 1;
+  }
+
+  // Section .shstrtab (last section)
+  size_t shstrtab_idx = num_sections - 1;
+  sections[shstrtab_idx].sh_name = name_shstrtab;
+  sections[shstrtab_idx].sh_type = 3; // SHT_STRTAB
+  sections[shstrtab_idx].sh_flags = 0;
+  sections[shstrtab_idx].sh_addr = 0;
+  sections[shstrtab_idx].sh_offset = shstrtab_file_offset;
+  sections[shstrtab_idx].sh_size = shstrtab.size();
+  sections[shstrtab_idx].sh_addralign = 1;
+
   // Append section header table to file_bytes
   const uint8_t *shdr_bytes = reinterpret_cast<const uint8_t *>(sections.data());
   file_bytes.insert(file_bytes.end(), shdr_bytes, shdr_bytes + num_sections * sizeof(Elf64_Shdr));
-
-  // Section 3: .shstrtab
-  size_t shstrtab_file_offset = file_bytes.size();
-  file_bytes.insert(file_bytes.end(), shstrtab.begin(), shstrtab.end());
-
-  // Fix up Section 3 header in file_bytes
-  Elf64_Shdr shstrtab_hdr{};
-  shstrtab_hdr.sh_name = name_shstrtab;
-  shstrtab_hdr.sh_type = 3; // SHT_STRTAB
-  shstrtab_hdr.sh_flags = 0;
-  shstrtab_hdr.sh_addr = 0;
-  shstrtab_hdr.sh_offset = shstrtab_file_offset;
-  shstrtab_hdr.sh_size = shstrtab.size();
-  shstrtab_hdr.sh_addralign = 1;
-  std::memcpy(&file_bytes[shoff + 3 * sizeof(Elf64_Shdr)], &shstrtab_hdr, sizeof(Elf64_Shdr));
 
   // 7. Fill ELF header and Program header
   Elf64_Ehdr ehdr{};
@@ -451,7 +555,7 @@ bool InternalElfLinker::link(const std::vector<AssembledModule> &modules,
   ehdr.e_phnum = 1;
   ehdr.e_shentsize = sizeof(Elf64_Shdr);
   ehdr.e_shnum = static_cast<uint16_t>(num_sections);
-  ehdr.e_shstrndx = 3;
+  ehdr.e_shstrndx = static_cast<uint16_t>(shstrtab_idx);
 
   Elf64_Phdr phdr{};
   phdr.p_type = 1;  // PT_LOAD
@@ -459,8 +563,8 @@ bool InternalElfLinker::link(const std::vector<AssembledModule> &modules,
   phdr.p_offset = 0;
   phdr.p_vaddr = BASE_VADDR;
   phdr.p_paddr = BASE_VADDR;
-  phdr.p_filesz = file_bytes.size();
-  phdr.p_memsz = file_bytes.size();
+  phdr.p_filesz = loadable_file_size;
+  phdr.p_memsz = loadable_file_size;
   phdr.p_align = ALIGN_PAGE;
 
   std::memcpy(&file_bytes[0], &ehdr, sizeof(Elf64_Ehdr));

@@ -18,6 +18,8 @@ enum class LocalVarStorage {
 struct CodeGenOptions {
   LocalVarStorage local_var_storage{LocalVarStorage::Auto};
   TargetSpec target_spec;
+  bool emit_debug_info{true};
+  std::string source_filename;
 };
 
 /**
@@ -73,6 +75,10 @@ public:
     }
     return options_.local_var_storage;
   }
+  virtual void set_emit_debug_info(bool emit) { options_.emit_debug_info = emit; }
+  virtual bool get_emit_debug_info() const { return options_.emit_debug_info; }
+  virtual void set_source_filename(const std::string &filename) { options_.source_filename = filename; }
+  virtual const std::string &get_source_filename() const { return options_.source_filename; }
 
   virtual std::string generate_to_string(const ProgramNode &program) {
     std::ostringstream ss;

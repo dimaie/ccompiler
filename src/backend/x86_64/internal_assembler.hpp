@@ -1,6 +1,7 @@
 #ifndef INTERNAL_ASSEMBLER_HPP
 #define INTERNAL_ASSEMBLER_HPP
 
+#include "dwarf_emitter.hpp"
 #include <cstdint>
 #include <set>
 #include <string>
@@ -27,6 +28,8 @@ struct AssembledModule {
   std::set<std::string> external_symbols;
   std::set<std::string> global_symbols;
   std::set<std::string> local_symbols;
+  std::unordered_map<uint32_t, std::string> file_table;
+  std::vector<SourceLoc> source_locs;
 };
 
 class X86_64InternalAssembler {

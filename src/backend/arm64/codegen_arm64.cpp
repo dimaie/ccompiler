@@ -13,6 +13,13 @@ void ARM64CodeGenerator::emit_raw(const std::string &line) {
   *out_ << line << "\n";
 }
 
+void ARM64CodeGenerator::emit_loc(int line) {
+  if (options_.emit_debug_info && line > 0 && line != last_emitted_line_) {
+    *out_ << "    .loc 1 " << line << " 0\n";
+    last_emitted_line_ = line;
+  }
+}
+
 int ARM64CodeGenerator::get_var_offset(const std::string &name) {
   auto it = var_offsets_.find(name);
   if (it != var_offsets_.end()) {
@@ -157,6 +164,12 @@ void ARM64CodeGenerator::generate(const ProgramNode &program,
   emit_raw("// ================================================================");
   emit_raw(".arch armv8-a");
   emit_raw(".text");
+  last_emitted_line_ = 0;
+
+  if (options_.emit_debug_info) {
+    std::string filename = options_.source_filename.empty() ? "input.c" : options_.source_filename;
+    emit_raw("    .file 1 \"" + filename + "\"");
+  }
 
   if (!has_func_defs) {
     int extra = 0;
@@ -173,6 +186,7 @@ void ARM64CodeGenerator::generate(const ProgramNode &program,
     // Prologue: Allocate frame (16-byte aligned) & save frame pointer + link register
     emit_line("stp x29, x30, [sp, -" + std::to_string(frame_size) + "]!    // save FP and LR, alloc frame");
     emit_line("mov x29, sp                 // set frame pointer");
+    emit_loc(1);
 
     program.accept(*this);
 
@@ -211,6 +225,7 @@ void ARM64CodeGenerator::generate(const ProgramNode &program,
 
     emit_line("stp x29, x30, [sp, -" + std::to_string(frame_size) + "]!    // save FP and LR, alloc frame");
     emit_line("mov x29, sp                 // set frame pointer");
+    emit_loc(1);
 
     for (const auto *stmt : non_func_stmts) {
       stmt->accept(*this);
@@ -248,6 +263,7 @@ void ARM64CodeGenerator::visit(const FuncDefNode &node) {
   emit_raw(node.name + ":");
   emit_line("stp x29, x30, [sp, -" + std::to_string(frame_size) + "]!    // save FP and LR, alloc frame");
   emit_line("mov x29, sp                 // set frame pointer");
+  emit_loc(node.line);
 
   static const char *const ARG_REGS[] = {
       "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"};
@@ -280,6 +296,7 @@ void ARM64CodeGenerator::visit(const FuncDefNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const CallNode &node) {
+  emit_loc(node.line);
   if (node.args.size() > 8) {
     unsupported(node, "more than 8 function call arguments");
   }
@@ -322,6 +339,7 @@ void ARM64CodeGenerator::visit(const CallNode &node) {
 void ARM64CodeGenerator::visit(const ProgramNode &node) {
   for (const auto &stmt : node.statements) {
     if (stmt) {
+      emit_loc(stmt->line);
       stmt->accept(*this);
     }
   }
@@ -330,12 +348,14 @@ void ARM64CodeGenerator::visit(const ProgramNode &node) {
 void ARM64CodeGenerator::visit(const CompoundNode &node) {
   for (const auto &stmt : node.statements) {
     if (stmt) {
+      emit_loc(stmt->line);
       stmt->accept(*this);
     }
   }
 }
 
 void ARM64CodeGenerator::visit(const VarDeclNode &node) {
+  emit_loc(node.line);
   var_types_[node.name] = node.data_type;
   if (node.is_func_ptr) {
     is_func_ptr_[node.name] = true;
@@ -443,6 +463,7 @@ void ARM64CodeGenerator::visit(const InitListNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const AssignNode &node) {
+  emit_loc(node.line);
   if (!node.left) {
     throw std::runtime_error("Left-hand side of assignment cannot be null");
   }
@@ -782,6 +803,7 @@ void ARM64CodeGenerator::visit(const BinaryOpNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const IfNode &node) {
+  emit_loc(node.line);
   std::string else_lbl = new_label(".Larm_if_else");
   std::string end_lbl = new_label(".Larm_if_end");
 
@@ -803,6 +825,7 @@ void ARM64CodeGenerator::visit(const IfNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const ForNode &node) {
+  emit_loc(node.line);
   std::string cond_lbl = new_label(".Larm_for_cond");
   std::string step_lbl = new_label(".Larm_for_step");
   std::string end_lbl = new_label(".Larm_for_end");
@@ -834,6 +857,7 @@ void ARM64CodeGenerator::visit(const ForNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const WhileNode &node) {
+  emit_loc(node.line);
   std::string cond_lbl = new_label(".Larm_while_cond");
   std::string end_lbl = new_label(".Larm_while_end");
 
@@ -856,6 +880,7 @@ void ARM64CodeGenerator::visit(const WhileNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const DoWhileNode &node) {
+  emit_loc(node.line);
   std::string body_lbl = new_label(".Larm_dowhile_body");
   std::string cond_lbl = new_label(".Larm_dowhile_cond");
   std::string end_lbl = new_label(".Larm_dowhile_end");
@@ -878,6 +903,7 @@ void ARM64CodeGenerator::visit(const DoWhileNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const SwitchNode &node) {
+  emit_loc(node.line);
   std::string end_lbl = new_label(".Larm_switch_end");
   std::string default_lbl = "";
   int cond_offset = get_var_offset("@arm_switch_cond_" + std::to_string(label_counter_));
@@ -935,14 +961,17 @@ void ARM64CodeGenerator::visit(const SwitchNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const CaseNode &node) {
+  emit_loc(node.line);
   for (const auto &stmt : node.statements) {
     if (stmt) {
+      emit_loc(stmt->line);
       stmt->accept(*this);
     }
   }
 }
 
 void ARM64CodeGenerator::visit(const BreakNode &node) {
+  emit_loc(node.line);
   if (break_stack_.empty()) {
     unsupported(node, "break statement outside of loop or switch");
   }
@@ -950,6 +979,7 @@ void ARM64CodeGenerator::visit(const BreakNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const ContinueNode &node) {
+  emit_loc(node.line);
   if (continue_stack_.empty()) {
     unsupported(node, "continue statement outside of loop");
   }
@@ -957,14 +987,17 @@ void ARM64CodeGenerator::visit(const ContinueNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const GotoNode &node) {
+  emit_loc(node.line);
   emit_line("b .Luser_" + node.label);
 }
 
 void ARM64CodeGenerator::visit(const LabelNode &node) {
+  emit_loc(node.line);
   emit_raw(".Luser_" + node.name + ":");
 }
 
 void ARM64CodeGenerator::visit(const ReturnNode &node) {
+  emit_loc(node.line);
   if (node.expr) {
     node.expr->accept(*this);
   }
@@ -1054,6 +1087,7 @@ void ARM64CodeGenerator::visit(const MemberAccessNode &node) {
 }
 
 void ARM64CodeGenerator::visit(const AsmStmtNode &node) {
+  emit_loc(node.line);
   std::istringstream stream(node.asm_code);
   std::string line;
   while (std::getline(stream, line)) {

@@ -81,10 +81,12 @@ private:
   std::string ret_label_{".Lmain_arm_ret"};
   std::vector<std::string> break_stack_;
   std::vector<std::string> continue_stack_;
+  int last_emitted_line_{0};
 
   std::string new_label(const std::string &prefix);
   void emit_line(const std::string &inst);
   void emit_raw(const std::string &line);
+  void emit_loc(int line);
   int get_var_offset(const std::string &name);
   DataType get_var_type(const std::string &name) const;
   std::string get_expr_struct_type(const ASTNode *expr) const;

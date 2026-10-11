@@ -59,6 +59,7 @@ void CompilerConfig::print(std::ostream &out) const {
   }
 
   out << "\n[CodeGen]\n";
+  out << "  Debug Info:     " << (codegen.emit_debug_info ? "enabled (-g)" : "disabled (-g0)") << "\n";
   out << "  Local Var Mode: ";
   switch (codegen.local_var_storage) {
   case LocalVarStorage::Auto: out << "auto\n"; break;
@@ -139,7 +140,9 @@ void CommandLineParser::print_usage(const char *prog_name, std::ostream &out) {
       << "  -D <macro>[=val]       Define preprocessor macro\n"
       << "  -l<lib>                Link against library archive or DLL (e.g. -luser32)\n"
       << "  -L<dir>                Add directory to library search path\n"
-      << "  --import <dll:func>    Explicitly map symbol to DLL (e.g. --import user32.dll:MessageBoxA)\n"
+      << "  -g, -g2, -g3           Generate source debug information (.file/.loc directives) [default: on]\n"
+      << "  -g0, --no-debug        Exclude source debug information\n"
+      << "  -s, --strip            Omit debug information and strip symbols\n"
       << "  --ast                  Print AST to stdout\n"
       << "  -h, --help             Display this help message\n\n";
 
@@ -256,6 +259,24 @@ bool CommandLineParser::parse(const std::vector<std::string> &args, CompilerConf
     }
     if (arg == "-shared") {
       config.general.target_file_type = TargetFileType::SharedLib;
+      continue;
+    }
+    if (arg == "-g" || arg == "-g1" || arg == "-g2" || arg == "-g3") {
+      config.codegen.emit_debug_info = true;
+      config.general.emit_debug_info = true;
+      config.linker.strip_debug_info = false;
+      continue;
+    }
+    if (arg == "-g0" || arg == "--no-debug") {
+      config.codegen.emit_debug_info = false;
+      config.general.emit_debug_info = false;
+      config.linker.strip_debug_info = true;
+      continue;
+    }
+    if (arg == "-s" || arg == "--strip") {
+      config.codegen.emit_debug_info = false;
+      config.general.emit_debug_info = false;
+      config.linker.strip_debug_info = true;
       continue;
     }
 

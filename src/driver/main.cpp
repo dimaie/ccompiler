@@ -138,7 +138,9 @@ int main(int argc, char *argv[]) {
         continue;
       }
 
-      auto codegen = CodeGeneratorFactory::create(config.general.target_spec, config.get_codegen_options());
+      auto codegen_opts = config.get_codegen_options();
+      codegen_opts.source_filename = (input_name == "-") ? "stdin.c" : input_name;
+      auto codegen = CodeGeneratorFactory::create(config.general.target_spec, codegen_opts);
       std::ostringstream generated_out;
       codegen->generate(*ast, generated_out);
       std::string asm_str = generated_out.str();

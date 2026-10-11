@@ -425,6 +425,16 @@ bool InternalPELinker::link(const std::vector<AssembledModule> &modules,
       }
       module.relocations.push_back(r);
     }
+
+    // Merge source_locs and file_table
+    for (const auto &pair : m.file_table) {
+      module.file_table[pair.first] = pair.second;
+    }
+    for (const auto &loc : m.source_locs) {
+      SourceLoc mapped = loc;
+      mapped.text_offset += placements[i].text_offset;
+      module.source_locs.push_back(mapped);
+    }
   }
 
   // Identify external symbols
@@ -726,14 +736,12 @@ bool InternalPELinker::link(const std::vector<AssembledModule> &modules,
 
   DosHeader dos;
   FileHeader file_hdr;
-  file_hdr.NumberOfSections = 2;
 
   OptionalHeader64 opt_hdr;
   opt_hdr.SizeOfCode = text_raw_size;
   opt_hdr.SizeOfInitializedData = rdata_raw_size;
   opt_hdr.AddressOfEntryPoint = text_rva + static_cast<uint32_t>(entry_offset);
   opt_hdr.BaseOfCode = text_rva;
-  opt_hdr.SizeOfImage = rdata_rva + align_up(static_cast<uint32_t>(rdata.size()), 0x1000);
   opt_hdr.SizeOfHeaders = headers_size;
 
   // Data Directory: Import Table (Index 1)
@@ -745,7 +753,7 @@ bool InternalPELinker::link(const std::vector<AssembledModule> &modules,
   opt_hdr.DataDirectory[12].Size = iat_size;
 
   // Section Headers
-  SectionHeader sec_text;
+  SectionHeader sec_text{};
   std::memcpy(sec_text.Name, ".text", 5);
   sec_text.VirtualSize = static_cast<uint32_t>(module.text_bytes.size());
   sec_text.VirtualAddress = text_rva;
@@ -753,13 +761,163 @@ bool InternalPELinker::link(const std::vector<AssembledModule> &modules,
   sec_text.PointerToRawData = 0x400;
   sec_text.Characteristics = 0x60000020; // CNT_CODE | MEM_EXECUTE | MEM_READ
 
-  SectionHeader sec_rdata;
+  SectionHeader sec_rdata{};
   std::memcpy(sec_rdata.Name, ".rdata", 6);
   sec_rdata.VirtualSize = static_cast<uint32_t>(rdata.size());
   sec_rdata.VirtualAddress = rdata_rva;
   sec_rdata.SizeOfRawData = rdata_raw_size;
   sec_rdata.PointerToRawData = 0x400 + text_raw_size;
   sec_rdata.Characteristics = 0x40000040; // CNT_INITIALIZED_DATA | MEM_READ
+
+  // DWARF Debug Information (.debug_line, .debug_info, .debug_abbrev)
+  bool has_debug = !module.source_locs.empty() && !config.strip_debug_info;
+  DwarfArtifacts dwarf;
+  std::vector<uint8_t> string_table;
+  SectionHeader sec_dbg_line{};
+  SectionHeader sec_dbg_info{};
+  SectionHeader sec_dbg_abbrev{};
+
+  if (has_debug) {
+    std::string primary_filename = "main.c";
+    for (const auto &pair : module.file_table) {
+      if (!pair.second.empty()) {
+        primary_filename = pair.second;
+        break;
+      }
+    }
+
+    std::vector<DwarfFunction> dwarf_funcs;
+    std::vector<std::pair<uint32_t, std::string>> sorted_syms;
+    for (const auto &pair : module.symbol_offsets) {
+      if (!pair.first.empty() && pair.first[0] != '.') {
+        sorted_syms.push_back({pair.second, pair.first});
+      }
+    }
+    std::sort(sorted_syms.begin(), sorted_syms.end());
+    uint32_t full_text_size = static_cast<uint32_t>(module.text_bytes.size());
+    for (size_t i = 0; i < sorted_syms.size(); ++i) {
+      uint32_t cur_off = sorted_syms[i].first;
+      uint32_t next_off = (i + 1 < sorted_syms.size()) ? sorted_syms[i + 1].first : full_text_size;
+      uint32_t fsize = (next_off > cur_off) ? (next_off - cur_off) : 16;
+      dwarf_funcs.push_back({sorted_syms[i].second, cur_off, fsize});
+    }
+
+    uint64_t full_text_vma = opt_hdr.ImageBase + text_rva;
+    dwarf = DwarfEmitter::emit(primary_filename, module.file_table, module.source_locs,
+                               full_text_vma, full_text_size, dwarf_funcs);
+
+    uint32_t dbg_line_virt_size = static_cast<uint32_t>(dwarf.debug_line.size());
+    uint32_t dbg_info_virt_size = static_cast<uint32_t>(dwarf.debug_info.size());
+    uint32_t dbg_abbrev_virt_size = static_cast<uint32_t>(dwarf.debug_abbrev.size());
+
+    uint32_t dbg_line_raw_size = align_up(dbg_line_virt_size, 0x200);
+    uint32_t dbg_info_raw_size = align_up(dbg_info_virt_size, 0x200);
+    uint32_t dbg_abbrev_raw_size = align_up(dbg_abbrev_virt_size, 0x200);
+    dwarf.debug_line.resize(dbg_line_raw_size, 0);
+    dwarf.debug_info.resize(dbg_info_raw_size, 0);
+    dwarf.debug_abbrev.resize(dbg_abbrev_raw_size, 0);
+
+    uint32_t dbg_line_rva = rdata_rva + align_up(static_cast<uint32_t>(rdata.size()), 0x1000);
+    uint32_t dbg_info_rva = dbg_line_rva + align_up(static_cast<uint32_t>(dwarf.debug_line.size()), 0x1000);
+    uint32_t dbg_abbrev_rva = dbg_info_rva + align_up(static_cast<uint32_t>(dwarf.debug_info.size()), 0x1000);
+
+    uint32_t dbg_line_file_off = 0x400 + text_raw_size + rdata_raw_size;
+    uint32_t dbg_info_file_off = dbg_line_file_off + dbg_line_raw_size;
+    uint32_t dbg_abbrev_file_off = dbg_info_file_off + dbg_info_raw_size;
+
+    // Build COFF Symbol Table and String Table
+#pragma pack(push, 1)
+    struct CoffSymbolRecord {
+      union {
+        char ShortName[8];
+        struct {
+          uint32_t Zeroes;
+          uint32_t Offset;
+        };
+      } Name;
+      uint32_t Value;
+      int16_t SectionNumber;
+      uint16_t Type;
+      uint8_t StorageClass;
+      uint8_t NumberOfAuxSymbols;
+    };
+#pragma pack(pop)
+
+    std::vector<CoffSymbolRecord> coff_symbols;
+    string_table.assign(4, 0);
+
+    for (const auto &fn : dwarf_funcs) {
+      CoffSymbolRecord rec{};
+      rec.Value = fn.offset;
+      rec.SectionNumber = 1; // .text is section 1
+      rec.Type = 0x20;       // DT_FCN = function
+      rec.StorageClass = 2;  // IMAGE_SYM_CLASS_EXTERNAL
+      rec.NumberOfAuxSymbols = 0;
+      if (fn.name.size() <= 8) {
+        std::memcpy(rec.Name.ShortName, fn.name.data(), fn.name.size());
+      } else {
+        rec.Name.Zeroes = 0;
+        rec.Name.Offset = static_cast<uint32_t>(string_table.size());
+        for (char c : fn.name) string_table.push_back(static_cast<uint8_t>(c));
+        string_table.push_back(0);
+      }
+      coff_symbols.push_back(rec);
+    }
+
+    uint32_t str_off_line = static_cast<uint32_t>(string_table.size());
+    const char s_line[] = ".debug_line";
+    string_table.insert(string_table.end(), s_line, s_line + sizeof(s_line));
+
+    uint32_t str_off_info = static_cast<uint32_t>(string_table.size());
+    const char s_info[] = ".debug_info";
+    string_table.insert(string_table.end(), s_info, s_info + sizeof(s_info));
+
+    uint32_t str_off_abbrev = static_cast<uint32_t>(string_table.size());
+    const char s_abbrev[] = ".debug_abbrev";
+    string_table.insert(string_table.end(), s_abbrev, s_abbrev + sizeof(s_abbrev));
+
+    uint32_t str_table_len = static_cast<uint32_t>(string_table.size());
+    string_table[0] = static_cast<uint8_t>(str_table_len & 0xFF);
+    string_table[1] = static_cast<uint8_t>((str_table_len >> 8) & 0xFF);
+    string_table[2] = static_cast<uint8_t>((str_table_len >> 16) & 0xFF);
+    string_table[3] = static_cast<uint8_t>((str_table_len >> 24) & 0xFF);
+
+    file_hdr.PointerToSymbolTable = dbg_abbrev_file_off + dbg_abbrev_raw_size;
+    file_hdr.NumberOfSymbols = static_cast<uint32_t>(coff_symbols.size());
+    file_hdr.NumberOfSections = 5;
+
+    std::string line_sec_name = "/" + std::to_string(str_off_line);
+    std::string info_sec_name = "/" + std::to_string(str_off_info);
+    std::string abbrev_sec_name = "/" + std::to_string(str_off_abbrev);
+
+    std::memcpy(sec_dbg_line.Name, line_sec_name.c_str(), line_sec_name.size());
+    sec_dbg_line.VirtualSize = dbg_line_virt_size;
+    sec_dbg_line.VirtualAddress = dbg_line_rva;
+    sec_dbg_line.SizeOfRawData = dbg_line_raw_size;
+    sec_dbg_line.PointerToRawData = dbg_line_file_off;
+    sec_dbg_line.Characteristics = 0x42000040; // MEM_READ | MEM_DISCARDABLE | CNT_INITIALIZED_DATA
+
+    std::memcpy(sec_dbg_info.Name, info_sec_name.c_str(), info_sec_name.size());
+    sec_dbg_info.VirtualSize = dbg_info_virt_size;
+    sec_dbg_info.VirtualAddress = dbg_info_rva;
+    sec_dbg_info.SizeOfRawData = dbg_info_raw_size;
+    sec_dbg_info.PointerToRawData = dbg_info_file_off;
+    sec_dbg_info.Characteristics = 0x42000040;
+
+    std::memcpy(sec_dbg_abbrev.Name, abbrev_sec_name.c_str(), abbrev_sec_name.size());
+    sec_dbg_abbrev.VirtualSize = dbg_abbrev_virt_size;
+    sec_dbg_abbrev.VirtualAddress = dbg_abbrev_rva;
+    sec_dbg_abbrev.SizeOfRawData = dbg_abbrev_raw_size;
+    sec_dbg_abbrev.PointerToRawData = dbg_abbrev_file_off;
+    sec_dbg_abbrev.Characteristics = 0x42000040;
+
+    opt_hdr.SizeOfImage = dbg_abbrev_rva + align_up(static_cast<uint32_t>(dwarf.debug_abbrev.size()), 0x1000);
+  } else {
+    file_hdr.NumberOfSections = 2;
+    file_hdr.PointerToSymbolTable = 0;
+    file_hdr.NumberOfSymbols = 0;
+    opt_hdr.SizeOfImage = rdata_rva + align_up(static_cast<uint32_t>(rdata.size()), 0x1000);
+  }
 
   // Write out binary
   std::ofstream out(output_filepath, std::ios::binary);
@@ -783,10 +941,66 @@ bool InternalPELinker::link(const std::vector<AssembledModule> &modules,
   size_t sec_offset = 0x98 + sizeof(OptionalHeader64);
   std::memcpy(header_bytes.data() + sec_offset, &sec_text, sizeof(sec_text));
   std::memcpy(header_bytes.data() + sec_offset + sizeof(sec_text), &sec_rdata, sizeof(sec_rdata));
+  if (has_debug) {
+    std::memcpy(header_bytes.data() + sec_offset + 2 * sizeof(SectionHeader), &sec_dbg_line, sizeof(sec_dbg_line));
+    std::memcpy(header_bytes.data() + sec_offset + 3 * sizeof(SectionHeader), &sec_dbg_info, sizeof(sec_dbg_info));
+    std::memcpy(header_bytes.data() + sec_offset + 4 * sizeof(SectionHeader), &sec_dbg_abbrev, sizeof(sec_dbg_abbrev));
+  }
 
   out.write(reinterpret_cast<const char *>(header_bytes.data()), header_bytes.size());
   out.write(reinterpret_cast<const char *>(module.text_bytes.data()), module.text_bytes.size());
   out.write(reinterpret_cast<const char *>(rdata.data()), rdata.size());
+  if (has_debug) {
+    out.write(reinterpret_cast<const char *>(dwarf.debug_line.data()), dwarf.debug_line.size());
+    out.write(reinterpret_cast<const char *>(dwarf.debug_info.data()), dwarf.debug_info.size());
+    out.write(reinterpret_cast<const char *>(dwarf.debug_abbrev.data()), dwarf.debug_abbrev.size());
+    if (file_hdr.NumberOfSymbols > 0) {
+      // Reconstruct and write symbol records
+      #pragma pack(push, 1)
+      struct CoffSymbolRecord {
+        union {
+          char ShortName[8];
+          struct {
+            uint32_t Zeroes;
+            uint32_t Offset;
+          };
+        } Name;
+        uint32_t Value;
+        int16_t SectionNumber;
+        uint16_t Type;
+        uint8_t StorageClass;
+        uint8_t NumberOfAuxSymbols;
+      };
+      #pragma pack(pop)
+      std::vector<CoffSymbolRecord> coff_symbols;
+      std::vector<std::pair<uint32_t, std::string>> sorted_syms;
+      for (const auto &pair : module.symbol_offsets) {
+        if (!pair.first.empty() && pair.first[0] != '.') {
+          sorted_syms.push_back({pair.second, pair.first});
+        }
+      }
+      std::sort(sorted_syms.begin(), sorted_syms.end());
+      uint32_t str_pos = 4;
+      for (const auto &p : sorted_syms) {
+        CoffSymbolRecord rec{};
+        rec.Value = p.first;
+        rec.SectionNumber = 1;
+        rec.Type = 0x20;
+        rec.StorageClass = 2;
+        rec.NumberOfAuxSymbols = 0;
+        if (p.second.size() <= 8) {
+          std::memcpy(rec.Name.ShortName, p.second.data(), p.second.size());
+        } else {
+          rec.Name.Zeroes = 0;
+          rec.Name.Offset = str_pos;
+          str_pos += static_cast<uint32_t>(p.second.size() + 1);
+        }
+        coff_symbols.push_back(rec);
+      }
+      out.write(reinterpret_cast<const char *>(coff_symbols.data()), coff_symbols.size() * sizeof(CoffSymbolRecord));
+    }
+    out.write(reinterpret_cast<const char *>(string_table.data()), string_table.size());
+  }
 
   if (!out.good()) {
     error_msg = "Error writing binary executable data to: " + output_filepath;
