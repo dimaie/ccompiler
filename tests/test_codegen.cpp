@@ -1712,7 +1712,23 @@ static void test_command_line_parser() {
     assert(cfg_c.general.target_file_type == TargetFileType::ObjectFile);
   }
 
-  // 9. Error handling: no input file
+  // 10. Intermediate representation flags (--emit-ir, --ir, --show-ir)
+  {
+    CompilerConfig cfg_ir;
+    std::vector<std::string> args = {"--emit-ir", "--show-ir", "input.c"};
+    bool ok = parser.parse(args, cfg_ir, err, help);
+    assert(ok);
+    assert(cfg_ir.general.stop_phase == StopPhase::IROnly);
+    assert(cfg_ir.general.show_ir);
+
+    CompilerConfig cfg_ir2;
+    std::vector<std::string> args2 = {"--ir", "input.c"};
+    ok = parser.parse(args2, cfg_ir2, err, help);
+    assert(ok);
+    assert(cfg_ir2.general.stop_phase == StopPhase::IROnly);
+  }
+
+  // 11. Error handling: no input file
   {
     CompilerConfig cfg_err;
     std::vector<std::string> args = {"-t", "x86_64"};

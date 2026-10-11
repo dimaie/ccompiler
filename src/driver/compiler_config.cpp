@@ -23,10 +23,12 @@ void CompilerConfig::print(std::ostream &out) const {
   switch (general.stop_phase) {
   case StopPhase::FullBuild: out << "FullBuild\n"; break;
   case StopPhase::PreprocessOnly: out << "PreprocessOnly (-E)\n"; break;
+  case StopPhase::IROnly: out << "IROnly (--emit-ir)\n"; break;
   case StopPhase::AssembleOnly: out << "AssembleOnly (-S)\n"; break;
   case StopPhase::CompileOnly: out << "CompileOnly (-c)\n"; break;
   }
   out << "  Show AST:       " << (general.show_ast ? "true" : "false") << "\n";
+  out << "  Show IR:        " << (general.show_ir ? "true" : "false") << "\n";
   out << "  Verbose:        " << (general.verbose ? "true" : "false") << "\n";
 
   out << "\n[Preprocessor]\n";
@@ -124,6 +126,8 @@ void CommandLineParser::print_usage(const char *prog_name, std::ostream &out) {
       << "  -c                     Compile and assemble only; do not link\n"
       << "  -S                     Stop after compilation phase; output assembly code\n"
       << "  -E                     Stop after preprocessing phase; output preprocessed source\n"
+      << "  --emit-ir, --ir        Stop after IR generation phase; output intermediate representation\n"
+      << "  --show-ir              Print intermediate representation to stderr during compilation\n"
       << "  -shared                Produce shared library / DLL\n"
       << "  -v, --verbose          Verbose output; display compiler configuration before execution\n"
       << "  -I <dir>               Add directory to include search path\n"
@@ -220,6 +224,14 @@ bool CommandLineParser::parse(const std::vector<std::string> &args, CompilerConf
     }
     if (arg == "--ast") {
       config.general.show_ast = true;
+      continue;
+    }
+    if (arg == "--show-ir") {
+      config.general.show_ir = true;
+      continue;
+    }
+    if (arg == "--emit-ir" || arg == "-emit-ir" || arg == "--ir") {
+      config.general.stop_phase = StopPhase::IROnly;
       continue;
     }
     if (arg == "-S") {

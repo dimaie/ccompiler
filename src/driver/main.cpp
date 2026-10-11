@@ -1,9 +1,11 @@
 #include "assembler_linker.hpp"
 #include "codegen.hpp"
 #include "compiler_config.hpp"
+#include "ir_builder.hpp"
 #include "lexer.hpp"
 #include "parser.hpp"
 #include "preprocessor.hpp"
+#include "target_info.hpp"
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -105,6 +107,39 @@ int main(int argc, char *argv[]) {
         ast->print(0);
       }
 
+      TargetInfo target_info = TargetInfo::from_string(config.general.target);
+      IRBuilder ir_builder(target_info);
+      IRModule ir_mod = ir_builder.build(*ast);
+
+      if (config.general.show_ir) {
+        if (config.general.output_filename.empty()) {
+          std::cerr << "=== Intermediate Representation (IR) for '" << input_name << "' ===\n";
+        }
+        ir_mod.print(std::cerr);
+      }
+
+      if (config.general.stop_phase == StopPhase::IROnly) {
+        std::ostringstream ir_out;
+        ir_mod.print(ir_out);
+        std::string ir_str = ir_out.str();
+
+        if (!config.general.output_filename.empty() && config.general.input_filenames.size() == 1) {
+          std::ofstream out_file(config.general.output_filename);
+          if (!out_file.is_open()) {
+            std::cerr << "Error: Could not open output file '" << config.general.output_filename << "'\n";
+            return 1;
+          }
+          out_file << ir_str;
+          if (!out_file.good()) {
+            std::cerr << "Error: Failed to write to output file '" << config.general.output_filename << "'\n";
+            return 1;
+          }
+        } else {
+          std::cout << ir_str;
+        }
+        continue;
+      }
+
       auto codegen = CodeGeneratorFactory::create(config.general.target, config.get_codegen_options());
       std::ostringstream generated_out;
       codegen->generate(*ast, generated_out);
@@ -139,6 +174,7 @@ int main(int argc, char *argv[]) {
   }
 
   if (config.general.stop_phase == StopPhase::PreprocessOnly ||
+      config.general.stop_phase == StopPhase::IROnly ||
       config.general.stop_phase == StopPhase::AssembleOnly) {
     return 0;
   }

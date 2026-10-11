@@ -31,6 +31,17 @@ static void test_target_info() {
   auto arm = TargetInfo::get(TargetArch::ARM64);
   assert(arm.is_64bit);
   assert(arm.pointer_size == 8);
+
+  auto from_str_x86 = TargetInfo::from_string("x86_64");
+  assert(from_str_x86.arch == TargetArch::X86_64);
+  assert(from_str_x86.pointer_size == 8);
+
+  auto from_str_avr = TargetInfo::from_string("avr");
+  assert(from_str_avr.arch == TargetArch::AVR);
+  assert(from_str_avr.pointer_size == 2);
+
+  auto from_str_arm = TargetInfo::from_string("arm64");
+  assert(from_str_arm.arch == TargetArch::ARM64);
 }
 
 static void test_ir_expression_lowering() {

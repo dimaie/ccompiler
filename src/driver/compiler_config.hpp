@@ -10,6 +10,7 @@
 enum class StopPhase {
   FullBuild,
   PreprocessOnly,
+  IROnly,
   AssembleOnly,
   CompileOnly
 };
@@ -22,6 +23,7 @@ struct GeneralConfig {
   StopPhase stop_phase{StopPhase::FullBuild};
   TargetFileType target_file_type{TargetFileType::Auto};
   bool show_ast{false};
+  bool show_ir{false};
   bool verbose{false};
 };
 

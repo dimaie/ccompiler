@@ -1,0 +1,236 @@
+function @noop() {
+    ret
+}
+
+function @square(%v0) {
+    %v1 = mul %v0, %v0
+    ret %v1
+}
+
+function @apply(%v2, %v3) {
+    %v4 = call @op(%v3)
+    ret %v4
+}
+
+function @add_short(%v5, %v6) {
+    %v7 = add %v5, %v6
+    ret %v7
+}
+
+function @deref_sum(%v8, %v9) {
+    %v10 = %v8
+    %v11 = %v9
+    %v12 = %v11
+    %v13 = add %v10, %v12
+    ret %v13
+}
+
+function @main() {
+    %v14 = $10    ; var a
+    %v15 = $20    ; var b
+    %v17 = $5    ; var s
+    %v18 = $6    ; var s2
+    %v19 = $30    ; var l
+    %v20 = $31    ; var l2
+    %v21 = $40    ; var ll
+    %v22 = $41    ; var ll2
+    %v23 =     ; var arr
+    %v24 =     ; var auto_arr
+    %v25 =     ; var pt
+    %v27 = %v25
+    %v26 = %v27    ; var ppt
+    %v30 = gep %v23, $1
+    %v31 = load %v30
+    %v32 = %v31
+    %v29 = %v32    ; var p
+    %v34 = %v29
+    %v33 = %v34    ; var pp
+    %v35 = @square    ; var fn
+    %v36 = call @noop()
+    %v38 = call @apply(%v35, $5)
+    %v37 = %v38    ; var sq
+    %v40 = call @add_short(%v17, %v18)
+    %v39 = %v40    ; var mod_sum
+    %v42 = call @deref_sum(%v29, %v33)
+    %v41 = %v42    ; var d_sum
+    %v16 = $50
+    %v14 = %v16
+    %v44 = %v14
+    %v43 = %v44    ; var u_pos
+    %v46 = neg %v14
+    %v45 = %v46    ; var u_neg
+    %v48 = not %v14
+    %v47 = %v48    ; var u_not
+    %v50 = not %v14
+    %v49 = %v50    ; var u_bnot
+    %v52 = gep %v25, @x
+    %v53 = load %v52
+    %v54 = %v53
+    %v51 = %v54    ; var u_addr
+    %v56 = %v51
+    %v55 = %v56    ; var u_deref
+    %v58 = mul %v14, $2
+    %v59 = add %v58, $10
+    %v60 = sub %v59, $4
+    %v61 = div %v60, $2
+    %v62 = mod %v61, $7
+    %v57 = %v62    ; var arith
+    %v67 = lt %v14, $100
+    br_if %v67, .and_end_6, .and_false_5
+    %v68 = le %v14, $50
+    %v66 = %v68
+    jump .and_end_6
+.and_false_5:
+    %v66 = $0
+.and_end_6:
+    br_if %v66, .and_end_4, .and_false_3
+    %v69 = gt %v15, $0
+    %v65 = %v69
+    jump .and_end_4
+.and_false_3:
+    %v65 = $0
+.and_end_4:
+    br_if %v65, .and_end_2, .and_false_1
+    %v70 = ge %v15, $20
+    %v64 = %v70
+    jump .and_end_2
+.and_false_1:
+    %v64 = $0
+.and_end_2:
+    %v63 = %v64    ; var rel
+    %v73 = eq %v14, $50
+    br_if %v73, .or_true_7, .or_end_8
+    %v74 = ne %v15, $20
+    %v72 = %v74
+    jump .or_end_8
+.or_true_7:
+    %v72 = $1
+.or_end_8:
+    %v71 = %v72    ; var eq
+    %v75 = $42    ; var hex
+    %v76 = $99    ; var block_var
+    %v77 = add %v14, %v76
+    %v14 = %v77
+    %v78 = gt %v14, $100
+    br_if %v78, .if_then_9, .if_else_10
+.if_then_9:
+    %v79 = sub %v14, $10
+    %v14 = %v79
+    jump .if_end_11
+.if_else_10:
+    %v80 = add %v14, $10
+    %v14 = %v80
+.if_end_11:
+    %v81 = eq %v75, $42
+    br_if %v81, .if_then_12, .if_end_14
+.if_then_12:
+    %v82 = add %v75, $1
+    %v75 = %v82
+.if_end_14:
+    %v83 = $3    ; var w_count
+.while_start_15:
+    %v84 = gt %v83, $0
+    br_if %v84, .while_body_16, .while_end_17
+.while_body_16:
+    %v85 = sub %v83, $1
+    %v83 = %v85
+    jump .while_start_15
+.while_end_17:
+    %v86 = $0    ; var dw_count
+.dowhile_body_18:
+    %v87 = add %v86, $1
+    %v86 = %v87
+.dowhile_cond_19:
+    %v88 = lt %v86, $2
+    br_if %v88, .dowhile_body_18, .dowhile_end_20
+.dowhile_end_20:
+    %v89 = $0    ; var for_acc
+    %v90 = $0    ; var i
+.for_cond_21:
+    %v91 = lt %v90, $5
+    br_if %v91, .for_body_22, .for_end_24
+.for_body_22:
+    %v92 = eq %v90, $1
+    br_if %v92, .if_then_25, .if_end_27
+.if_then_25:
+    jump .for_step_23
+.if_end_27:
+    %v93 = eq %v90, $4
+    br_if %v93, .if_then_28, .if_end_30
+.if_then_28:
+    jump .for_end_24
+.if_end_30:
+    %v94 = add %v89, %v90
+    %v89 = %v94
+.for_step_23:
+    %v95 = add %v90, $1
+    %v90 = %v95
+    jump .for_cond_21
+.for_end_24:
+.for_cond_31:
+    %v96 = lt %v89, $10
+    br_if %v96, .for_body_32, .for_end_34
+.for_body_32:
+.for_step_33:
+    %v97 = add %v89, $1
+    %v89 = %v97
+    jump .for_cond_31
+.for_end_34:
+    %v98 = $0    ; var sw_res
+    %v99 = eq %v86, $1
+    br_if %v99, .case_36, .switch_check_39
+.switch_check_39:
+    %v100 = eq %v86, $2
+    br_if %v100, .case_37, .switch_check_40
+.switch_check_40:
+    jump .case_default_38
+.case_36:
+    %v98 = $100
+    jump .switch_end_35
+.case_37:
+    %v98 = $200
+    jump .switch_end_35
+.case_default_38:
+    %v101 = neg $1
+    %v98 = %v101
+    jump .switch_end_35
+.switch_end_35:
+    jump target_label
+    %v14 = $0
+target_label:
+    %v102 = gep %v25, @x
+    %v103 = load %v102
+    %v104 = gep %v26, @y
+    %v105 = load %v104
+    %v106 = add %v103, %v105
+    %v107 = gep %v23, $0
+    %v108 = load %v107
+    %v109 = add %v106, %v108
+    %v110 = %v29
+    %v111 = add %v109, %v110
+    %v112 = add %v111, %v37
+    %v113 = add %v112, %v75
+    %v114 = add %v113, %v98
+    %v115 = add %v114, %v39
+    %v116 = add %v115, %v41
+    %v117 = add %v116, %v55
+    %v118 = add %v117, %v57
+    %v119 = add %v118, %v63
+    %v120 = add %v119, %v71
+    %v121 = add %v120, %v43
+    %v122 = add %v121, %v45
+    %v123 = add %v122, %v47
+    %v124 = add %v123, %v49
+    %v125 = gep %v24, $0
+    %v126 = load %v125
+    %v127 = add %v124, %v126
+    %v128 = gep %v28, @sval
+    %v129 = load %v128
+    %v130 = add %v127, %v129
+    %v131 = add %v130, %v19
+    %v132 = add %v131, %v20
+    %v133 = add %v132, %v21
+    %v134 = add %v133, %v22
+    ret %v134
+}
+

@@ -64,6 +64,26 @@ struct TargetInfo {
     }
     return info;
   }
+
+  static TargetInfo from_string(const std::string &arch_name) {
+    std::string lower = arch_name;
+    for (char &c : lower) {
+      if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
+    }
+    if (lower == "x86" || lower == "x86_64" || lower == "x86-64" || lower == "amd64") {
+      return get(TargetArch::X86_64);
+    }
+    if (lower == "avr" || lower == "arduino" || lower == "atmega328p") {
+      return get(TargetArch::AVR);
+    }
+    if (lower == "arm" || lower == "arm64" || lower == "aarch64" || lower == "rpi" || lower == "raspberrypi") {
+      return get(TargetArch::ARM64);
+    }
+    if (lower == "c" || lower == "c_transpiler") {
+      return get(TargetArch::C_Transpiler);
+    }
+    return get(TargetArch::X86_64);
+  }
 };
 
 #endif // TARGET_INFO_HPP
