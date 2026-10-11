@@ -39,10 +39,16 @@ This performs the complete embedded toolchain sequence:
 
 ## 3. Uploading to Arduino Uno
 
-Connect your Arduino Uno via USB, determine its COM port (e.g. `COM3` on Windows, or `/dev/ttyACM0` on Linux), and flash using `avrdude`:
+Connect your Arduino Uno via USB, determine its COM port (e.g. `COM7` on Windows, or `/dev/ttyACM0` on Linux), and flash using `avrdude`.
 
-```bash
-avrdude -v -p m328p -c arduino -P COM3 -b 115200 -D -U flash:w:samples/avr/blink.hex:i
+When using `avrdude` bundled with Arduino IDE, pass the config file with `-C`:
+
+```powershell
+# Using avrdude from Arduino installation (e.g. C:\Arduino_1.8):
+& "C:\Arduino_1.8\hardware\tools\avr\bin\avrdude.exe" `
+    -C "C:\Arduino_1.8\hardware\tools\avr\etc\avrdude.conf" `
+    -v -p m328p -c arduino -P COM7 -b 115200 -D `
+    -U flash:w:samples/avr/blink.hex:i
 ```
 
 Once uploaded, the built-in "L" LED on Digital Pin 13 will start blinking!
