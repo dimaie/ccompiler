@@ -112,6 +112,22 @@ inline const char *token_op_str(TokenType op) {
   }
 }
 
+enum class CallingConvention {
+  Default,
+  Cdecl,
+  Stdcall,
+  Fastcall
+};
+
+inline const char *calling_convention_str(CallingConvention cc) {
+  switch (cc) {
+  case CallingConvention::Cdecl: return "__cdecl";
+  case CallingConvention::Stdcall: return "__stdcall";
+  case CallingConvention::Fastcall: return "__fastcall";
+  default: return "default";
+  }
+}
+
 // Forward declarations of concrete AST nodes
 class ProgramNode;
 class CompoundNode;
@@ -261,6 +277,7 @@ public:
   int func_ptr_ret_pointer_level{0};
   std::vector<DataType> func_ptr_params;
   std::string struct_name;
+  CallingConvention func_ptr_calling_convention{CallingConvention::Default};
 
   VarDeclNode(int line, DataType data_type, std::string name,
               std::unique_ptr<ASTNode> init = nullptr)
@@ -317,6 +334,7 @@ struct Param {
   int func_ptr_ret_pointer_level{0};
   std::vector<DataType> func_ptr_params;
   std::string struct_name;
+  CallingConvention func_ptr_calling_convention{CallingConvention::Default};
 };
 
 class FuncDefNode : public ASTNode {
@@ -327,13 +345,16 @@ public:
   std::vector<Param> params;
   std::unique_ptr<CompoundNode> body;
   std::string return_struct_name;
+  CallingConvention calling_convention{CallingConvention::Default};
 
   FuncDefNode(int line, DataType return_type, std::string name,
               std::vector<Param> params, std::unique_ptr<CompoundNode> body,
-              int return_pointer_level = 0)
+              int return_pointer_level = 0,
+              CallingConvention calling_convention = CallingConvention::Default)
       : ASTNode(line), return_type(return_type),
         return_pointer_level(return_pointer_level), name(std::move(name)),
-        params(std::move(params)), body(std::move(body)) {}
+        params(std::move(params)), body(std::move(body)),
+        calling_convention(calling_convention) {}
 
   ASTNodeType getType() const override { return ASTNodeType::FuncDef; }
   void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }

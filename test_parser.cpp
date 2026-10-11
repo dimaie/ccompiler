@@ -1613,6 +1613,66 @@ static void test_inline_asm() {
   }
 }
 
+static void test_calling_conventions() {
+  std::cout << "Testing Calling Conventions (__cdecl, __stdcall, __fastcall)...\n";
+
+  // 1. __cdecl function definition
+  {
+    auto prog = parse_source("int __cdecl add(int a, int b) { return a + b; }\n");
+    assert(prog->statements.size() == 1);
+    auto *fn = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(fn->name == "add");
+    assert(fn->calling_convention == CallingConvention::Cdecl);
+  }
+
+  // 2. __stdcall function definition
+  {
+    auto prog = parse_source("int __stdcall sub(int a, int b) { return a - b; }\n");
+    assert(prog->statements.size() == 1);
+    auto *fn = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(fn->name == "sub");
+    assert(fn->calling_convention == CallingConvention::Stdcall);
+  }
+
+  // 3. __fastcall function definition
+  {
+    auto prog = parse_source("int __fastcall mul(int a, int b) { return a * b; }\n");
+    assert(prog->statements.size() == 1);
+    auto *fn = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(fn->name == "mul");
+    assert(fn->calling_convention == CallingConvention::Fastcall);
+  }
+
+  // 4. Calling convention before return type
+  {
+    auto prog = parse_source("__fastcall int square(int x) { return x * x; }\n");
+    assert(prog->statements.size() == 1);
+    auto *fn = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(fn->name == "square");
+    assert(fn->calling_convention == CallingConvention::Fastcall);
+  }
+
+  // 5. Function pointer with calling convention
+  {
+    auto prog = parse_source("int (__stdcall *handler)(int, int);\n");
+    assert(prog->statements.size() == 1);
+    auto *vd = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(vd->is_func_ptr);
+    assert(vd->name == "handler");
+    assert(vd->func_ptr_calling_convention == CallingConvention::Stdcall);
+  }
+
+  // 6. Function taking function pointer parameter with calling convention
+  {
+    auto prog = parse_source("void register_cb(int (__fastcall *cb)(int));\n");
+    assert(prog->statements.size() == 1);
+    auto *fn = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(!fn->params.empty());
+    assert(fn->params[0].is_func_ptr);
+    assert(fn->params[0].func_ptr_calling_convention == CallingConvention::Fastcall);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running AST & Parser Test Suite\n";
@@ -1649,9 +1709,10 @@ int main() {
   test_char_and_string_literals();
   test_preprocessor();
   test_inline_asm();
+  test_calling_conventions();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (31/31)\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (32/32)\n";
   std::cout << "========================================\n";
   return 0;
 }

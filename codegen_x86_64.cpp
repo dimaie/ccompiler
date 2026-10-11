@@ -220,6 +220,8 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
   is_array_.clear();
   array_sizes_.clear();
   is_func_ptr_.clear();
+  var_func_ptr_conventions_.clear();
+  func_conventions_.clear();
   var_struct_name_.clear();
   struct_defs_.clear();
   current_offset_ = 0;
@@ -227,6 +229,13 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
   break_stack_.clear();
   continue_stack_.clear();
   string_literals_.clear();
+
+  for (const auto &stmt : program.statements) {
+    if (stmt && stmt->getType() == ASTNodeType::FuncDef) {
+      const auto *f = static_cast<const FuncDefNode *>(stmt.get());
+      func_conventions_[f->name] = f->calling_convention;
+    }
+  }
 
   for (const auto &stmt : program.statements) {
     if (stmt && stmt->getType() == ASTNodeType::StructDef) {
@@ -331,6 +340,7 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
 }
 
 void X86_64CodeGenerator::visit(const FuncDefNode &node) {
+  func_conventions_[node.name] = node.calling_convention;
   if (!node.body) {
     return; // Function prototype / declaration, no code to generate
   }
@@ -340,6 +350,7 @@ void X86_64CodeGenerator::visit(const FuncDefNode &node) {
   is_array_.clear();
   array_sizes_.clear();
   is_func_ptr_.clear();
+  var_func_ptr_conventions_.clear();
   current_offset_ = 0;
   break_stack_.clear();
   continue_stack_.clear();
@@ -351,19 +362,57 @@ void X86_64CodeGenerator::visit(const FuncDefNode &node) {
       "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
 
   std::ostringstream param_ss;
-  for (size_t i = 0; i < node.params.size(); ++i) {
-    if (i < 6) {
+  if (node.calling_convention == CallingConvention::Default) {
+    for (size_t i = 0; i < node.params.size(); ++i) {
+      if (i < 6) {
+        const auto &p = node.params[i];
+        var_types_[p.name] = p.type;
+        var_pointer_level_[p.name] = p.pointer_level;
+        if (p.is_func_ptr) {
+          is_func_ptr_[p.name] = true;
+          var_func_ptr_conventions_[p.name] = p.func_ptr_calling_convention;
+        }
+        int offset = get_var_offset(p.name);
+        param_ss << "    movq " << ARG_REGS[i] << ", -"
+                 << offset << "(%rbp)\n";
+      } else {
+        unsupported(node, "more than 6 function parameters");
+      }
+    }
+  } else if (node.calling_convention == CallingConvention::Cdecl ||
+             node.calling_convention == CallingConvention::Stdcall) {
+    for (size_t i = 0; i < node.params.size(); ++i) {
       const auto &p = node.params[i];
       var_types_[p.name] = p.type;
       var_pointer_level_[p.name] = p.pointer_level;
       if (p.is_func_ptr) {
         is_func_ptr_[p.name] = true;
+        var_func_ptr_conventions_[p.name] = p.func_ptr_calling_convention;
       }
       int offset = get_var_offset(p.name);
-      param_ss << "    movq " << ARG_REGS[i] << ", -"
-               << offset << "(%rbp)\n";
-    } else {
-      unsupported(node, "more than 6 function parameters");
+      int stack_offset = 16 + static_cast<int>(i) * 8;
+      param_ss << "    movq " << stack_offset << "(%rbp), %rax\n";
+      param_ss << "    movq %rax, -" << offset << "(%rbp)\n";
+    }
+  } else if (node.calling_convention == CallingConvention::Fastcall) {
+    for (size_t i = 0; i < node.params.size(); ++i) {
+      const auto &p = node.params[i];
+      var_types_[p.name] = p.type;
+      var_pointer_level_[p.name] = p.pointer_level;
+      if (p.is_func_ptr) {
+        is_func_ptr_[p.name] = true;
+        var_func_ptr_conventions_[p.name] = p.func_ptr_calling_convention;
+      }
+      int offset = get_var_offset(p.name);
+      if (i == 0) {
+        param_ss << "    movq %rcx, -" << offset << "(%rbp)\n";
+      } else if (i == 1) {
+        param_ss << "    movq %rdx, -" << offset << "(%rbp)\n";
+      } else {
+        int stack_offset = 16 + static_cast<int>(i - 2) * 8;
+        param_ss << "    movq " << stack_offset << "(%rbp), %rax\n";
+        param_ss << "    movq %rax, -" << offset << "(%rbp)\n";
+      }
     }
   }
 
@@ -390,14 +439,30 @@ void X86_64CodeGenerator::visit(const FuncDefNode &node) {
 
   emit_raw(ret_label_ + ":");
   emit_line("leave");
-  emit_line("ret");
+  if (node.calling_convention == CallingConvention::Stdcall && !node.params.empty()) {
+    emit_line("ret $" + std::to_string(node.params.size() * 8));
+  } else if (node.calling_convention == CallingConvention::Fastcall && node.params.size() > 2) {
+    emit_line("ret $" + std::to_string((node.params.size() - 2) * 8));
+  } else {
+    emit_line("ret");
+  }
 
   ret_label_ = prev_ret_label;
 }
 
 void X86_64CodeGenerator::visit(const CallNode &node) {
-  if (node.args.size() > 6) {
-    unsupported(node, "more than 6 function call arguments");
+  CallingConvention cc = CallingConvention::Default;
+  if (!node.callee.empty()) {
+    auto it = func_conventions_.find(node.callee);
+    if (it != func_conventions_.end()) {
+      cc = it->second;
+    }
+  } else if (node.callee_expr && node.callee_expr->getType() == ASTNodeType::Identifier) {
+    const auto *id = static_cast<const IdentifierNode *>(node.callee_expr.get());
+    auto it = var_func_ptr_conventions_.find(id->name);
+    if (it != var_func_ptr_conventions_.end()) {
+      cc = it->second;
+    }
   }
 
   bool is_indirect = false;
@@ -412,45 +477,134 @@ void X86_64CodeGenerator::visit(const CallNode &node) {
     emit_line("pushq %rax");
   }
 
-  for (const auto &arg : node.args) {
-    if (arg) {
-      arg->accept(*this);
-    } else {
-      emit_line("movq $0, %rax");
+  if (cc == CallingConvention::Default) {
+    if (node.args.size() > 6) {
+      unsupported(node, "more than 6 function call arguments");
     }
-    emit_line("pushq %rax");
-  }
 
-  static const char *const ARG_REGS[] = {
-      "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
-  for (int i = static_cast<int>(node.args.size()) - 1; i >= 0; --i) {
-    emit_line("popq " + std::string(ARG_REGS[i]));
-  }
+    for (const auto &arg : node.args) {
+      if (arg) {
+        arg->accept(*this);
+      } else {
+        emit_line("movq $0, %rax");
+      }
+      emit_line("pushq %rax");
+    }
 
-  // Dual-load Windows x64 ABI registers so external functions (e.g. puts, printf)
-  // work seamlessly on Windows (MinGW/MSVC) as well as SysV AMD64 (Linux).
-  if (node.args.size() >= 4) emit_line("movq %rcx, %r9");
-  if (node.args.size() >= 3) emit_line("movq %rdx, %r8");
-  if (node.args.size() >= 2) emit_line("movq %rsi, %rdx");
-  if (node.args.size() >= 1) emit_line("movq %rdi, %rcx");
+    static const char *const ARG_REGS[] = {
+        "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
+    for (int i = static_cast<int>(node.args.size()) - 1; i >= 0; --i) {
+      emit_line("popq " + std::string(ARG_REGS[i]));
+    }
 
-  if (is_indirect) {
-    emit_line("popq %r11");
-    emit_line("movq %rsp, %r10");
-    emit_line("andq $-16, %rsp");
-    emit_line("pushq %r10");
-    emit_line("subq $40, %rsp");
-    emit_line("call *%r11");
-    emit_line("addq $40, %rsp");
-    emit_line("popq %rsp");
-  } else {
-    emit_line("movq %rsp, %r11");
-    emit_line("andq $-16, %rsp");
-    emit_line("pushq %r11");
-    emit_line("subq $40, %rsp");
-    emit_line("call " + node.callee);
-    emit_line("addq $40, %rsp");
-    emit_line("popq %rsp");
+    // Dual-load Windows x64 ABI registers so external functions (e.g. puts, printf)
+    // work seamlessly on Windows (MinGW/MSVC) as well as SysV AMD64 (Linux).
+    if (node.args.size() >= 4) emit_line("movq %rcx, %r9");
+    if (node.args.size() >= 3) emit_line("movq %rdx, %r8");
+    if (node.args.size() >= 2) emit_line("movq %rsi, %rdx");
+    if (node.args.size() >= 1) emit_line("movq %rdi, %rcx");
+
+    if (is_indirect) {
+      emit_line("popq %r11");
+      emit_line("movq %rsp, %r10");
+      emit_line("andq $-16, %rsp");
+      emit_line("pushq %r10");
+      emit_line("subq $40, %rsp");
+      emit_line("call *%r11");
+      emit_line("addq $40, %rsp");
+      emit_line("popq %rsp");
+    } else {
+      emit_line("movq %rsp, %r11");
+      emit_line("andq $-16, %rsp");
+      emit_line("pushq %r11");
+      emit_line("subq $40, %rsp");
+      emit_line("call " + node.callee);
+      emit_line("addq $40, %rsp");
+      emit_line("popq %rsp");
+    }
+  } else if (cc == CallingConvention::Cdecl || cc == CallingConvention::Stdcall) {
+    int num_args = static_cast<int>(node.args.size());
+    int total_stack_slots = (is_indirect ? 1 : 0) + num_args;
+    bool need_pad = (total_stack_slots % 2 != 0);
+    if (need_pad) {
+      emit_line("subq $8, %rsp");
+    }
+
+    for (int i = num_args - 1; i >= 0; --i) {
+      if (node.args[i]) {
+        node.args[i]->accept(*this);
+      } else {
+        emit_line("movq $0, %rax");
+      }
+      emit_line("pushq %rax");
+    }
+
+    if (is_indirect) {
+      int ind_offset = (num_args + (need_pad ? 1 : 0)) * 8;
+      emit_line("movq " + std::to_string(ind_offset) + "(%rsp), %r11");
+      emit_line("call *%r11");
+    } else {
+      emit_line("call " + node.callee);
+    }
+
+    if (cc == CallingConvention::Cdecl) {
+      int cleanup_bytes = num_args * 8 + (need_pad ? 8 : 0) + (is_indirect ? 8 : 0);
+      if (cleanup_bytes > 0) {
+        emit_line("addq $" + std::to_string(cleanup_bytes) + ", %rsp");
+      }
+    } else {
+      int cleanup_bytes = (need_pad ? 8 : 0) + (is_indirect ? 8 : 0);
+      if (cleanup_bytes > 0) {
+        emit_line("addq $" + std::to_string(cleanup_bytes) + ", %rsp");
+      }
+    }
+  } else if (cc == CallingConvention::Fastcall) {
+    int num_args = static_cast<int>(node.args.size());
+    int stack_args = num_args > 2 ? num_args - 2 : 0;
+    int total_stack_slots = (is_indirect ? 1 : 0) + stack_args;
+    bool need_pad = (total_stack_slots % 2 != 0);
+    if (need_pad) {
+      emit_line("subq $8, %rsp");
+    }
+
+    for (int i = num_args - 1; i >= 2; --i) {
+      if (node.args[i]) {
+        node.args[i]->accept(*this);
+      } else {
+        emit_line("movq $0, %rax");
+      }
+      emit_line("pushq %rax");
+    }
+
+    if (num_args >= 2) {
+      if (node.args[1]) {
+        node.args[1]->accept(*this);
+      } else {
+        emit_line("movq $0, %rax");
+      }
+      emit_line("movq %rax, %rdx");
+    }
+    if (num_args >= 1) {
+      if (node.args[0]) {
+        node.args[0]->accept(*this);
+      } else {
+        emit_line("movq $0, %rax");
+      }
+      emit_line("movq %rax, %rcx");
+    }
+
+    if (is_indirect) {
+      int ind_offset = (stack_args + (need_pad ? 1 : 0)) * 8;
+      emit_line("movq " + std::to_string(ind_offset) + "(%rsp), %r11");
+      emit_line("call *%r11");
+    } else {
+      emit_line("call " + node.callee);
+    }
+
+    int cleanup_bytes = (need_pad ? 8 : 0) + (is_indirect ? 8 : 0);
+    if (cleanup_bytes > 0) {
+      emit_line("addq $" + std::to_string(cleanup_bytes) + ", %rsp");
+    }
   }
 }
 
@@ -475,6 +629,7 @@ void X86_64CodeGenerator::visit(const VarDeclNode &node) {
   var_pointer_level_[node.name] = node.pointer_level;
   if (node.is_func_ptr) {
     is_func_ptr_[node.name] = true;
+    var_func_ptr_conventions_[node.name] = node.func_ptr_calling_convention;
   }
   if (!node.struct_name.empty()) {
     var_struct_name_[node.name] = node.struct_name;

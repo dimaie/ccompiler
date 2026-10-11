@@ -113,6 +113,9 @@ void CCodeGenerator::visit(const ProgramNode &node) {
 }
 
 void CCodeGenerator::visit(const FuncDefNode &node) {
+  if (node.calling_convention != CallingConvention::Default) {
+    *out_ << calling_convention_str(node.calling_convention) << " ";
+  }
   if (node.return_type == DataType::Struct || node.return_type == DataType::Union) {
     *out_ << (node.return_type == DataType::Union ? "union " : "struct ")
           << node.return_struct_name;

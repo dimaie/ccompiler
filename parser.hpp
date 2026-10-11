@@ -37,9 +37,11 @@ public:
   // Declarations (implemented in parser_decl.cpp)
   bool is_type_specifier(TokenType type) const;
   DataType parse_type_specifier();
+  bool is_calling_convention(TokenType type) const;
+  CallingConvention parse_calling_convention();
   std::unique_ptr<ASTNode> parse_declaration();
   std::unique_ptr<ASTNode> parse_struct_or_union_decl();
-  std::unique_ptr<FuncDefNode> parse_function_def(DataType return_type, const Token &id_tok, int return_pointer_level = 0);
+  std::unique_ptr<FuncDefNode> parse_function_def(DataType return_type, const Token &id_tok, int return_pointer_level = 0, CallingConvention calling_convention = CallingConvention::Default);
   std::unique_ptr<VarDeclNode> parse_var_decl_after_id(DataType type, const Token &id_tok, int pointer_level = 0);
   std::unique_ptr<VarDeclNode> parse_var_decl();
 
@@ -68,7 +70,7 @@ private:
   Lexer *lexer_;
 
   // Declaration parsing helpers (parser_decl.cpp)
-  std::unique_ptr<VarDeclNode> parse_func_ptr_decl(DataType return_type);
+  std::unique_ptr<VarDeclNode> parse_func_ptr_decl(DataType return_type, CallingConvention calling_convention = CallingConvention::Default);
 
   // Expression parsing helpers (parser_expr.cpp)
   std::unique_ptr<ASTNode> parse_assignment();

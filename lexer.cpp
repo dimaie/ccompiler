@@ -40,6 +40,12 @@ constexpr KeywordMap KEYWORDS[] = {
     {"asm", TOK_KW_ASM},           {"__asm__", TOK_KW_ASM},
     {"__asm", TOK_KW_ASM},
     {"while", TOK_KW_WHILE},
+    {"__cdecl", TOK_KW_CDECL},     {"_cdecl", TOK_KW_CDECL},
+    {"cdecl", TOK_KW_CDECL},
+    {"__stdcall", TOK_KW_STDCALL}, {"_stdcall", TOK_KW_STDCALL},
+    {"stdcall", TOK_KW_STDCALL},
+    {"__fastcall", TOK_KW_FASTCALL}, {"_fastcall", TOK_KW_FASTCALL},
+    {"fastcall", TOK_KW_FASTCALL},
     {nullptr, TOK_UNKNOWN}};
 
 } // namespace
@@ -461,7 +467,7 @@ Token Lexer::peek(size_t k) {
 
 const char *token_name(TokenType t) {
   // Check keywords from KEYWORDS map
-  if (t >= TOK_KW_AUTO && t <= TOK_KW_WHILE) {
+  if (t >= TOK_KW_AUTO && t <= TOK_KW_FASTCALL) {
     for (int i = 0; KEYWORDS[i].str != nullptr; ++i) {
       if (KEYWORDS[i].type == t) {
         return KEYWORDS[i].str;

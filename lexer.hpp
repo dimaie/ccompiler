@@ -63,6 +63,9 @@ enum TokenType {
   TOK_KW_VOLATILE,
   TOK_KW_ASM,
   TOK_KW_WHILE,
+  TOK_KW_CDECL,
+  TOK_KW_STDCALL,
+  TOK_KW_FASTCALL,
 
   /* Punctuation & Delimiters */
   TOK_LPAREN,    /**< '(' Grouping parenthesis */

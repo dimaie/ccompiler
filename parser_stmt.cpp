@@ -171,7 +171,7 @@ std::unique_ptr<ReturnNode> Parser::parse_return() {
 std::unique_ptr<ASTNode> Parser::parse_statement() {
   Token t = peek();
 
-  if (is_type_specifier(t.type)) {
+  if (is_type_specifier(t.type) || is_calling_convention(t.type)) {
     return parse_declaration();
   }
   if (t.type == TOK_KW_FOR) {

@@ -1,6 +1,17 @@
 #include "parser.hpp"
 #include <utility>
 
+bool Parser::is_calling_convention(TokenType type) const {
+  return type == TOK_KW_CDECL || type == TOK_KW_STDCALL || type == TOK_KW_FASTCALL;
+}
+
+CallingConvention Parser::parse_calling_convention() {
+  if (match(TOK_KW_CDECL)) return CallingConvention::Cdecl;
+  if (match(TOK_KW_STDCALL)) return CallingConvention::Stdcall;
+  if (match(TOK_KW_FASTCALL)) return CallingConvention::Fastcall;
+  return CallingConvention::Default;
+}
+
 bool Parser::is_type_specifier(TokenType type) const {
   return type == TOK_KW_INT || type == TOK_KW_SHORT || type == TOK_KW_LONG ||
          type == TOK_KW_CHAR || type == TOK_KW_VOID || type == TOK_KW_STRUCT ||
@@ -70,11 +81,20 @@ static std::vector<DataType> parse_func_ptr_param_list(Parser *parser, Lexer *le
   return param_types;
 }
 
-std::unique_ptr<VarDeclNode> Parser::parse_func_ptr_decl(DataType return_type) {
+std::unique_ptr<VarDeclNode> Parser::parse_func_ptr_decl(DataType return_type, CallingConvention cc) {
   expect(TOK_LPAREN, "Expected '(' in function pointer declaration");
+  if (cc == CallingConvention::Default && is_calling_convention(peek().type)) {
+    cc = parse_calling_convention();
+  }
   int ptr_level = 0;
   while (match(TOK_STAR)) {
     ++ptr_level;
+    if (cc == CallingConvention::Default && is_calling_convention(peek().type)) {
+      cc = parse_calling_convention();
+    }
+  }
+  if (cc == CallingConvention::Default && is_calling_convention(peek().type)) {
+    cc = parse_calling_convention();
   }
   if (ptr_level == 0) {
     ptr_level = 1;
@@ -94,24 +114,38 @@ std::unique_ptr<VarDeclNode> Parser::parse_func_ptr_decl(DataType return_type) {
   node->pointer_level = ptr_level;
   node->func_ptr_ret_type = return_type;
   node->func_ptr_params = std::move(param_types);
+  node->func_ptr_calling_convention = cc;
   return node;
 }
 
 std::unique_ptr<ASTNode> Parser::parse_declaration() {
+  CallingConvention cc = CallingConvention::Default;
+  if (is_calling_convention(peek().type)) {
+    cc = parse_calling_convention();
+  }
   if (peek().type == TOK_KW_STRUCT || peek().type == TOK_KW_UNION) {
     return parse_struct_or_union_decl();
   }
   DataType type = parse_type_specifier();
-  if (peek().type == TOK_LPAREN && peek(2).type == TOK_STAR) {
-    return parse_func_ptr_decl(type);
+  if (cc == CallingConvention::Default && is_calling_convention(peek().type)) {
+    cc = parse_calling_convention();
+  }
+  if (peek().type == TOK_LPAREN && (peek(2).type == TOK_STAR || is_calling_convention(peek(2).type))) {
+    return parse_func_ptr_decl(type, cc);
   }
   int pointer_level = 0;
   while (match(TOK_STAR)) {
     ++pointer_level;
+    if (cc == CallingConvention::Default && is_calling_convention(peek().type)) {
+      cc = parse_calling_convention();
+    }
+  }
+  if (cc == CallingConvention::Default && is_calling_convention(peek().type)) {
+    cc = parse_calling_convention();
   }
   Token id_tok = expect(TOK_IDENTIFIER, "Expected identifier after type specifier");
   if (peek().type == TOK_LPAREN) {
-    return parse_function_def(type, id_tok, pointer_level);
+    return parse_function_def(type, id_tok, pointer_level, cc);
   }
   if (type == DataType::Void && pointer_level == 0) {
     parse_error(id_tok, "Variable cannot have type 'void'");
@@ -196,7 +230,7 @@ std::unique_ptr<ASTNode> Parser::parse_struct_or_union_decl() {
 }
 
 std::unique_ptr<FuncDefNode>
-Parser::parse_function_def(DataType return_type, const Token &id_tok, int return_pointer_level) {
+Parser::parse_function_def(DataType return_type, const Token &id_tok, int return_pointer_level, CallingConvention calling_convention) {
   expect(TOK_LPAREN, "Expected '(' after function name");
   std::vector<Param> params;
   if (peek().type != TOK_RPAREN) {
@@ -204,6 +238,10 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
       lexer_->next(); // consume 'void'
     } else {
       while (true) {
+        CallingConvention param_fp_cc = CallingConvention::Default;
+        if (is_calling_convention(peek().type)) {
+          param_fp_cc = parse_calling_convention();
+        }
         DataType param_type = DataType::Int;
         std::string param_struct_name;
         if (peek().type == TOK_KW_STRUCT || peek().type == TOK_KW_UNION) {
@@ -215,11 +253,23 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
         } else {
           param_type = parse_type_specifier();
         }
-        if (peek().type == TOK_LPAREN && peek(2).type == TOK_STAR) {
+        if (param_fp_cc == CallingConvention::Default && is_calling_convention(peek().type)) {
+          param_fp_cc = parse_calling_convention();
+        }
+        if (peek().type == TOK_LPAREN && (peek(2).type == TOK_STAR || is_calling_convention(peek(2).type))) {
           expect(TOK_LPAREN, "Expected '(' in function pointer parameter");
+          if (param_fp_cc == CallingConvention::Default && is_calling_convention(peek().type)) {
+            param_fp_cc = parse_calling_convention();
+          }
           int ptr_level = 0;
           while (match(TOK_STAR)) {
             ++ptr_level;
+            if (param_fp_cc == CallingConvention::Default && is_calling_convention(peek().type)) {
+              param_fp_cc = parse_calling_convention();
+            }
+          }
+          if (param_fp_cc == CallingConvention::Default && is_calling_convention(peek().type)) {
+            param_fp_cc = parse_calling_convention();
           }
           if (ptr_level == 0) ptr_level = 1;
           Token param_name = expect(TOK_IDENTIFIER, "Expected parameter name");
@@ -236,6 +286,7 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
           p.func_ptr_ret_type = param_type;
           p.func_ptr_params = std::move(p_param_types);
           p.struct_name = param_struct_name;
+          p.func_ptr_calling_convention = param_fp_cc;
           params.push_back(std::move(p));
         } else {
           int param_ptr_level = 0;
@@ -264,15 +315,18 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
     }
   }
   expect(TOK_RPAREN, "Expected ')' after parameters");
+  if (calling_convention == CallingConvention::Default && is_calling_convention(peek().type)) {
+    calling_convention = parse_calling_convention();
+  }
   if (match(TOK_SEMICOLON)) {
     return std::make_unique<FuncDefNode>(id_tok.line, return_type, id_tok.text,
                                          std::move(params), nullptr,
-                                         return_pointer_level);
+                                         return_pointer_level, calling_convention);
   }
   auto body = parse_compound_statement();
   return std::make_unique<FuncDefNode>(id_tok.line, return_type, id_tok.text,
                                        std::move(params), std::move(body),
-                                       return_pointer_level);
+                                       return_pointer_level, calling_convention);
 }
 
 std::unique_ptr<VarDeclNode>

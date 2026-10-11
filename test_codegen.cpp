@@ -1349,6 +1349,86 @@ static void test_linker_libraries() {
   }
 }
 
+static void test_calling_conventions_codegen() {
+  std::cout << "Testing Calling Conventions (__cdecl, __stdcall, __fastcall) Codegen...\n";
+
+  auto x86 = CodeGeneratorFactory::create(TargetArch::X86_64);
+
+  // 1. __cdecl: stack passing + caller cleanup
+  {
+    const char *src =
+        "int __cdecl add(int a, int b) {\n"
+        "  return a + b;\n"
+        "}\n"
+        "int main() {\n"
+        "  return add(2, 3);\n"
+        "}\n";
+    auto prog = parse(src);
+    std::string asm_code = x86->generate_to_string(*prog);
+
+    // In add: args accessed from stack
+    assert(asm_code.find("16(%rbp)") != std::string::npos);
+    assert(asm_code.find("24(%rbp)") != std::string::npos);
+    // In add: callee does regular ret (no ret $N)
+    assert(asm_code.find("ret $") == std::string::npos);
+    // In main: caller cleans up 16 bytes of stack
+    assert(asm_code.find("addq $16, %rsp") != std::string::npos);
+  }
+
+  // 2. __stdcall: stack passing + callee cleanup
+  {
+    const char *src =
+        "int __stdcall sub(int a, int b) {\n"
+        "  return a - b;\n"
+        "}\n"
+        "int main() {\n"
+        "  return sub(10, 4);\n"
+        "}\n";
+    auto prog = parse(src);
+    std::string asm_code = x86->generate_to_string(*prog);
+
+    // In sub: args accessed from stack
+    assert(asm_code.find("16(%rbp)") != std::string::npos);
+    assert(asm_code.find("24(%rbp)") != std::string::npos);
+    // In sub: callee cleans up 2 * 8 = 16 bytes via ret $16
+    assert(asm_code.find("ret $16") != std::string::npos);
+  }
+
+  // 3. __fastcall: registers %rcx and %rdx + stack for rest + callee cleanup
+  {
+    const char *src =
+        "int __fastcall compute(int a, int b, int c, int d) {\n"
+        "  return a + b + c + d;\n"
+        "}\n"
+        "int main() {\n"
+        "  return compute(1, 2, 3, 4);\n"
+        "}\n";
+    auto prog = parse(src);
+    std::string asm_code = x86->generate_to_string(*prog);
+
+    // In compute: first two in %rcx, %rdx
+    assert(asm_code.find("movq %rcx, -") != std::string::npos);
+    assert(asm_code.find("movq %rdx, -") != std::string::npos);
+    // In compute: 3rd and 4th args from stack 16(%rbp) and 24(%rbp)
+    assert(asm_code.find("16(%rbp)") != std::string::npos);
+    assert(asm_code.find("24(%rbp)") != std::string::npos);
+    // In compute: callee cleans up the 2 stack args (2 * 8 = 16)
+    assert(asm_code.find("ret $16") != std::string::npos);
+    // In main: arguments 0 and 1 loaded into %rcx, %rdx
+    assert(asm_code.find("movq %rax, %rcx") != std::string::npos);
+    assert(asm_code.find("movq %rax, %rdx") != std::string::npos);
+  }
+
+  // 4. C transpiler preserves calling convention
+  {
+    auto c_gen = CodeGeneratorFactory::create(TargetArch::C_Transpiler);
+    const char *src = "int __cdecl add(int a, int b) { return a + b; }\n";
+    auto prog = parse(src);
+    std::string c_code = c_gen->generate_to_string(*prog);
+    assert(c_code.find("__cdecl") != std::string::npos);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Code Generator Test Suite\n";
@@ -1371,9 +1451,10 @@ int main() {
   test_assembler_linker();
   test_inline_asm_codegen();
   test_linker_libraries();
+  test_calling_conventions_codegen();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL CODEGEN TESTS PASSED! (17/17)\n";
+  std::cout << "  ALL CODEGEN TESTS PASSED! (18/18)\n";
   std::cout << "========================================\n";
   return 0;
 }
