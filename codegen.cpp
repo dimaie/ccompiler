@@ -16,15 +16,15 @@ std::unique_ptr<ICodeGenerator> CodeGeneratorFactory::create(TargetArch arch) {
     return std::make_unique<ARM64CodeGenerator>();
   case TargetArch::C_Transpiler:
     return std::make_unique<CCodeGenerator>();
-  default:
-    throw std::runtime_error("Unsupported target architecture");
   }
+  throw std::runtime_error("Unsupported target architecture");
 }
 
 std::unique_ptr<ICodeGenerator>
 CodeGeneratorFactory::create(const std::string &arch_name) {
   std::string lower = arch_name;
-  std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+  std::transform(lower.begin(), lower.end(), lower.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
   if (lower == "x86" || lower == "x86_64" || lower == "x86-64" ||
       lower == "amd64") {
@@ -131,6 +131,10 @@ void ICodeGenerator::visit(const UnaryOpNode &node) {
 
 void ICodeGenerator::visit(const IntLitNode &node) {
   unsupported(node, "integer literal");
+}
+
+void ICodeGenerator::visit(const StringLitNode &node) {
+  unsupported(node, "string literal");
 }
 
 void ICodeGenerator::visit(const IdentifierNode &node) {

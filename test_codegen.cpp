@@ -1,7 +1,9 @@
+#include "assembler_linker.hpp"
 #include "codegen.hpp"
 #include "lexer.hpp"
 #include "parser.hpp"
 #include <cassert>
+#include <filesystem>
 #include <iostream>
 #include <string>
 
@@ -952,6 +954,197 @@ static void test_union_codegen() {
   }
 }
 
+static void test_code_review_fixes() {
+  std::cout << "Testing Code Review fixes across C and x86_64 backends...\n";
+
+  // 1. C backend: non-compound statement bodies terminating with semicolon
+  {
+    auto gen = CodeGeneratorFactory::create("c");
+    auto prog = parse("int x = 1;\n"
+                      "int y = 0;\n"
+                      "int z = 0;\n"
+                      "if (x) y = 1; else z = 2;\n"
+                      "while (x < 5) x = x + 1;\n"
+                      "for (int i = 0; i < 5; i = i + 1) y = y + i;\n"
+                      "while (x); \n");
+    std::string c_code = gen->generate_to_string(*prog);
+    assert(c_code.find("if (x) y = 1; else z = 2;") != std::string::npos);
+    assert(c_code.find("while ((x < 5)) x = (x + 1);") != std::string::npos);
+    assert(c_code.find("for (int i = 0; (i < 5); i = (i + 1)) y = (y + i);") != std::string::npos);
+    assert(c_code.find("while (x) ;") != std::string::npos);
+  }
+
+  // 2. C backend: unary negative not producing --
+  {
+    auto gen = CodeGeneratorFactory::create("c");
+    auto prog = parse("int x = 5;\n"
+                      "int a = -(-x);\n"
+                      "int b = -(-1);\n"
+                      "return a + b;\n");
+    std::string c_code = gen->generate_to_string(*prog);
+    assert(c_code.find("--x") == std::string::npos);
+    assert(c_code.find("--1") == std::string::npos);
+    assert(c_code.find("- -x") != std::string::npos || c_code.find("- - x") != std::string::npos || c_code.find("- (-x)") != std::string::npos);
+  }
+
+  // 3. C backend: global variables preserved when main() is present
+  {
+    auto gen = CodeGeneratorFactory::create("c");
+    auto prog = parse("int global_var = 42;\n"
+                      "int foo() { return global_var; }\n"
+                      "int main() { return foo(); }\n");
+    std::string c_code = gen->generate_to_string(*prog);
+    assert(c_code.find("int global_var = 42;") != std::string::npos);
+    assert(c_code.find("int foo(void) {") != std::string::npos);
+    assert(c_code.find("int main(void) {") != std::string::npos);
+  }
+
+  // 4. C backend: StructDef with var_decl not emitted twice
+  {
+    auto gen = CodeGeneratorFactory::create("c");
+    auto prog = parse("struct Point { int x; int y; } p;\n"
+                      "int foo() { return p.x; }\n"
+                      "return foo();\n");
+    std::string c_code = gen->generate_to_string(*prog);
+    size_t first = c_code.find("struct Point {");
+    assert(first != std::string::npos);
+    size_t second = c_code.find("struct Point {", first + 1);
+    assert(second == std::string::npos);
+  }
+
+  // 5. x86_64: short pointer handling and dereference
+  {
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse("short x = 10;\n"
+                      "short *p = &x;\n"
+                      "*p = 20;\n"
+                      "short *q = p;\n"
+                      "return *q;\n");
+    std::string asm_code = gen->generate_to_string(*prog);
+    // Writing through short* must be 16-bit store movw %ax, (%r10)
+    assert(asm_code.find("movw %ax, (%r10)") != std::string::npos);
+    // Reading through short* must be 16-bit load movswq (%rax), %rax
+    assert(asm_code.find("movswq (%rax), %rax") != std::string::npos);
+    // Pointer assignment q = p must be 64-bit movq, not movw
+    assert(asm_code.find("movswq -") == std::string::npos); // p is short*, not short scalar
+  }
+
+  // 6. x86_64: pointer indexing p[i] uses pointer value, not stack address
+  {
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse("short x = 10;\n"
+                      "short *p = &x;\n"
+                      "return p[0];\n");
+    std::string asm_code = gen->generate_to_string(*prog);
+    // Must load pointer into %r11: movq -offset(%rbp), %r11
+    assert(asm_code.find("movq -") != std::string::npos);
+    assert(asm_code.find("(%r11, %rax, 2)") != std::string::npos);
+  }
+}
+
+static void test_char_and_string_literals_codegen() {
+  std::cout << "Testing Char and String Literals Codegen...\n";
+
+  // 1. x86_64: char scalar store and load
+  {
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse("char c = 'A';\n"
+                      "return c;\n");
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("movb %al, -") != std::string::npos);
+    assert(asm_code.find("movsbq -") != std::string::npos);
+  }
+
+  // 2. x86_64: char array and pointer indexing
+  {
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse("char arr[4];\n"
+                      "arr[1] = 65;\n"
+                      "return arr[1];\n");
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("movb %al, (%r11, %r10, 1)") != std::string::npos);
+    assert(asm_code.find("movsbq (%r11, %rax, 1), %rax") != std::string::npos);
+  }
+
+  // 3. x86_64: string literal and .rodata
+  {
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse("int main() {\n"
+                      "  puts(\"Hello, World!\");\n"
+                      "  return 0;\n"
+                      "}\n");
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find(".section .rodata") != std::string::npos);
+    assert(asm_code.find(".string \"Hello, World!\"") != std::string::npos);
+    assert(asm_code.find("leaq .LC_") != std::string::npos);
+    assert(asm_code.find("call puts") != std::string::npos);
+    assert(asm_code.find("movq %rdi, %rcx") != std::string::npos); // Windows ABI support
+    assert(asm_code.find("subq $40, %rsp") != std::string::npos); // 32-byte shadow space
+  }
+
+  // 4. C backend: char and string literal
+  {
+    auto gen = CodeGeneratorFactory::create("c");
+    auto prog = parse("char *msg = \"test\";\n");
+    std::string c_code = gen->generate_to_string(*prog);
+    assert(c_code.find("char *msg = \"test\";") != std::string::npos);
+  }
+}
+
+static void test_assembler_linker() {
+  std::cout << "Testing Assembler and Linker Subsystem...\n";
+
+  // 1. Factory creation & support checking
+  {
+    auto x86_linker = AssemblerLinkerFactory::create("x86_64");
+    assert(x86_linker != nullptr);
+    assert(x86_linker->get_arch() == TargetArch::X86_64);
+    assert(x86_linker->is_supported() == true);
+
+    auto arm_linker = AssemblerLinkerFactory::create("arm64");
+    assert(arm_linker != nullptr);
+    assert(arm_linker->is_supported() == false);
+
+    auto avr_linker = AssemblerLinkerFactory::create("avr");
+    assert(avr_linker != nullptr);
+    assert(avr_linker->is_supported() == false);
+
+    auto c_linker = AssemblerLinkerFactory::create("c");
+    assert(c_linker != nullptr);
+    assert(c_linker->is_supported() == false);
+  }
+
+  // 2. Stub linker behavior
+  {
+    auto arm_linker = AssemblerLinkerFactory::create("arm64");
+    auto res = arm_linker->assemble_and_link("dummy assembly", "test_stub.s");
+    assert(!res.success);
+    assert(res.message.find("not yet available") != std::string::npos);
+    std::error_code ec;
+    std::filesystem::remove("test_stub.s", ec);
+  }
+
+  // 3. x86_64 assembler and linker execution
+  {
+    auto x86_linker = AssemblerLinkerFactory::create("x86_64");
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse("int main() { return 42; }\n");
+    std::string asm_code = gen->generate_to_string(*prog);
+
+    std::string exe_path = "test_build_exe.exe";
+    auto res = x86_linker->assemble_and_link(asm_code, exe_path);
+    assert(res.success);
+    assert(std::filesystem::exists(exe_path));
+
+    // Run the generated executable and verify exit code
+    int code = std::system(".\\test_build_exe.exe");
+    assert(code == 42);
+
+    std::error_code ec;
+    std::filesystem::remove(exe_path, ec);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Code Generator Test Suite\n";
@@ -969,9 +1162,12 @@ int main() {
   test_func_ptrs_codegen();
   test_struct_codegen();
   test_union_codegen();
+  test_code_review_fixes();
+  test_char_and_string_literals_codegen();
+  test_assembler_linker();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL CODEGEN TESTS PASSED! (12/12)\n";
+  std::cout << "  ALL CODEGEN TESTS PASSED! (15/15)\n";
   std::cout << "========================================\n";
   return 0;
 }

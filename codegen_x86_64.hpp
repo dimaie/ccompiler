@@ -37,6 +37,7 @@ public:
   void visit(const BinaryOpNode &node) override;
   void visit(const UnaryOpNode &node) override;
   void visit(const IntLitNode &node) override;
+  void visit(const StringLitNode &node) override;
   void visit(const IdentifierNode &node) override;
   void visit(const StructDefNode &node) override;
   void visit(const MemberAccessNode &node) override;
@@ -65,6 +66,7 @@ private:
   std::ostream *out_{nullptr};
   std::unordered_map<std::string, int> var_offsets_;
   std::unordered_map<std::string, DataType> var_types_;
+  std::unordered_map<std::string, int> var_pointer_level_;
   std::unordered_map<std::string, bool> is_array_;
   std::unordered_map<std::string, int> array_sizes_;
   std::unordered_map<std::string, bool> is_func_ptr_;
@@ -75,12 +77,17 @@ private:
   std::string ret_label_{".Lmain_ret"};
   std::vector<std::string> break_stack_;
   std::vector<std::string> continue_stack_;
+  std::vector<std::pair<std::string, std::string>> string_literals_;
 
   std::string new_label(const std::string &prefix);
   void emit_line(const std::string &inst);
   void emit_raw(const std::string &line);
+  void emit_string_literal(const std::string &str);
   int get_var_offset(const std::string &name);
   DataType get_var_type(const std::string &name) const;
+  int get_var_pointer_level(const std::string &name) const;
+  bool is_func_ptr(const std::string &name) const;
+  DataType get_expr_type(const ASTNode *expr, int &pointer_level) const;
   std::string get_expr_struct_type(const ASTNode *expr) const;
   int get_type_size(DataType type, const std::string &st_name = "") const;
 };

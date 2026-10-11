@@ -13,6 +13,22 @@ void X86_64CodeGenerator::emit_raw(const std::string &line) {
   *out_ << line << "\n";
 }
 
+void X86_64CodeGenerator::emit_string_literal(const std::string &str) {
+  *out_ << "    .string \"";
+  for (unsigned char c : str) {
+    if (c == '"') *out_ << "\\\"";
+    else if (c == '\\') *out_ << "\\\\";
+    else if (c == '\n') *out_ << "\\n";
+    else if (c == '\r') *out_ << "\\r";
+    else if (c == '\t') *out_ << "\\t";
+    else if (c >= 32 && c <= 126) *out_ << static_cast<char>(c);
+    else {
+      *out_ << "\\" << std::oct << static_cast<int>(c) << std::dec;
+    }
+  }
+  *out_ << "\"\n";
+}
+
 int X86_64CodeGenerator::get_var_offset(const std::string &name) {
   auto it = var_offsets_.find(name);
   if (it != var_offsets_.end()) {
@@ -31,6 +47,85 @@ DataType X86_64CodeGenerator::get_var_type(const std::string &name) const {
   return DataType::Int;
 }
 
+int X86_64CodeGenerator::get_var_pointer_level(const std::string &name) const {
+  auto it = var_pointer_level_.find(name);
+  if (it != var_pointer_level_.end()) {
+    return it->second;
+  }
+  return 0;
+}
+
+bool X86_64CodeGenerator::is_func_ptr(const std::string &name) const {
+  auto it = is_func_ptr_.find(name);
+  return it != is_func_ptr_.end() && it->second;
+}
+
+DataType X86_64CodeGenerator::get_expr_type(const ASTNode *expr, int &pointer_level) const {
+  pointer_level = 0;
+  if (!expr) return DataType::Int;
+  if (expr->getType() == ASTNodeType::Identifier) {
+    const auto *id = static_cast<const IdentifierNode *>(expr);
+    pointer_level = get_var_pointer_level(id->name);
+    return get_var_type(id->name);
+  }
+  if (expr->getType() == ASTNodeType::MemberAccess) {
+    const auto *mem = static_cast<const MemberAccessNode *>(expr);
+    std::string parent_st = get_expr_struct_type(mem->object.get());
+    auto it = struct_defs_.find(parent_st);
+    if (it != struct_defs_.end()) {
+      auto mit = it->second.member_map.find(mem->member);
+      if (mit != it->second.member_map.end()) {
+        pointer_level = mit->second.pointer_level;
+        return mit->second.type;
+      }
+    }
+    return DataType::Int;
+  }
+  if (expr->getType() == ASTNodeType::UnaryOp) {
+    const auto *u = static_cast<const UnaryOpNode *>(expr);
+    if (u->op == TOK_STAR) {
+      int inner_ptr = 0;
+      DataType t = get_expr_type(u->expr.get(), inner_ptr);
+      pointer_level = inner_ptr > 0 ? inner_ptr - 1 : 0;
+      return t;
+    }
+    if (u->op == TOK_AMP) {
+      int inner_ptr = 0;
+      DataType t = get_expr_type(u->expr.get(), inner_ptr);
+      pointer_level = inner_ptr + 1;
+      return t;
+    }
+  }
+  if (expr->getType() == ASTNodeType::ArrayAccess) {
+    const auto *arr = static_cast<const ArrayAccessNode *>(expr);
+    int inner_ptr = 0;
+    DataType t = get_expr_type(arr->array.get(), inner_ptr);
+    pointer_level = inner_ptr > 0 ? inner_ptr - 1 : 0;
+    return t;
+  }
+  if (expr->getType() == ASTNodeType::BinaryOp) {
+    const auto *b = static_cast<const BinaryOpNode *>(expr);
+    int l_ptr = 0;
+    DataType lt = get_expr_type(b->left.get(), l_ptr);
+    if (l_ptr > 0) {
+      pointer_level = l_ptr;
+      return lt;
+    }
+    int r_ptr = 0;
+    DataType rt = get_expr_type(b->right.get(), r_ptr);
+    if (r_ptr > 0) {
+      pointer_level = r_ptr;
+      return rt;
+    }
+    return lt;
+  }
+  if (expr->getType() == ASTNodeType::StringLit) {
+    pointer_level = 1;
+    return DataType::Char;
+  }
+  return DataType::Int;
+}
+
 int X86_64CodeGenerator::get_type_size(DataType type, const std::string &st_name) const {
   if (type == DataType::Struct || type == DataType::Union) {
     auto it = struct_defs_.find(st_name);
@@ -39,6 +134,7 @@ int X86_64CodeGenerator::get_type_size(DataType type, const std::string &st_name
     }
     return 8;
   }
+  if (type == DataType::Char) return 1;
   if (type == DataType::Short) return 2;
   return 8;
 }
@@ -107,6 +203,11 @@ static int compute_ast_frame_bytes(const ASTNode *node) {
         size += compute_ast_frame_bytes(st.get());
       }
     }
+  } else if (node->getType() == ASTNodeType::StructDef) {
+    const auto *sd = static_cast<const StructDefNode *>(node);
+    if (sd->var_decl) {
+      size += compute_ast_frame_bytes(sd->var_decl.get());
+    }
   }
   return size;
 }
@@ -125,6 +226,7 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
   label_counter_ = 0;
   break_stack_.clear();
   continue_stack_.clear();
+  string_literals_.clear();
 
   for (const auto &stmt : program.statements) {
     if (stmt && stmt->getType() == ASTNodeType::StructDef) {
@@ -150,24 +252,33 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
   }
 
   if (!has_func_defs) {
-    int extra = 0;
-    for (const auto &stmt : program.statements) {
-      extra += compute_ast_frame_bytes(stmt.get());
-    }
-    int frame_size = (extra + 16 > 128) ? ((extra + 16 + 15) & ~15) : 128;
-
+    std::ostringstream body_ss;
+    std::ostream *orig_out = out_;
+    out_ = &body_ss;
     ret_label_ = ".Lmain_ret";
+
+    program.accept(*this);
+
+    out_ = orig_out;
+    int frame_size = (current_offset_ + 16 > 128) ? ((current_offset_ + 16 + 15) & ~15) : 128;
+
     emit_raw(".globl main");
     emit_raw("main:");
     emit_line("pushq %rbp");
     emit_line("movq %rsp, %rbp");
     emit_line("subq $" + std::to_string(frame_size) + ", %rsp");
-
-    program.accept(*this);
-
+    *out_ << body_ss.str();
     emit_raw(ret_label_ + ":");
     emit_line("leave");
     emit_line("ret");
+    if (!string_literals_.empty()) {
+      emit_raw(".section .rodata");
+      for (const auto &lit : string_literals_) {
+        emit_raw(lit.first + ":");
+        emit_string_literal(lit.second);
+      }
+      emit_raw(".text");
+    }
     return;
   }
 
@@ -180,36 +291,49 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
   if (!has_main_func && !non_func_stmts.empty()) {
     var_offsets_.clear();
     var_types_.clear();
+    var_pointer_level_.clear();
     is_array_.clear();
     array_sizes_.clear();
+    is_func_ptr_.clear();
     current_offset_ = 0;
 
-    int extra = 0;
-    for (const auto *stmt : non_func_stmts) {
-      extra += compute_ast_frame_bytes(stmt);
-    }
-    int frame_size = (extra + 16 > 128) ? ((extra + 16 + 15) & ~15) : 128;
-
+    std::ostringstream body_ss;
+    std::ostream *orig_out = out_;
+    out_ = &body_ss;
     ret_label_ = ".Lmain_ret";
-    emit_raw(".globl main");
-    emit_raw("main:");
-    emit_line("pushq %rbp");
-    emit_line("movq %rsp, %rbp");
-    emit_line("subq $" + std::to_string(frame_size) + ", %rsp");
 
     for (const auto *stmt : non_func_stmts) {
       stmt->accept(*this);
     }
 
+    out_ = orig_out;
+    int frame_size = (current_offset_ + 16 > 128) ? ((current_offset_ + 16 + 15) & ~15) : 128;
+
+    emit_raw(".globl main");
+    emit_raw("main:");
+    emit_line("pushq %rbp");
+    emit_line("movq %rsp, %rbp");
+    emit_line("subq $" + std::to_string(frame_size) + ", %rsp");
+    *out_ << body_ss.str();
     emit_raw(ret_label_ + ":");
     emit_line("leave");
     emit_line("ret");
+  }
+
+  if (!string_literals_.empty()) {
+    emit_raw(".section .rodata");
+    for (const auto &lit : string_literals_) {
+      emit_raw(lit.first + ":");
+      emit_string_literal(lit.second);
+    }
+    emit_raw(".text");
   }
 }
 
 void X86_64CodeGenerator::visit(const FuncDefNode &node) {
   var_offsets_.clear();
   var_types_.clear();
+  var_pointer_level_.clear();
   is_array_.clear();
   array_sizes_.clear();
   is_func_ptr_.clear();
@@ -220,9 +344,37 @@ void X86_64CodeGenerator::visit(const FuncDefNode &node) {
   std::string prev_ret_label = ret_label_;
   ret_label_ = ".L" + node.name + "_ret";
 
-  int extra = static_cast<int>(node.params.size()) * 8 +
-              compute_ast_frame_bytes(node.body.get());
-  int frame_size = (extra + 16 > 128) ? ((extra + 16 + 15) & ~15) : 128;
+  static const char *const ARG_REGS[] = {
+      "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
+
+  std::ostringstream param_ss;
+  for (size_t i = 0; i < node.params.size(); ++i) {
+    if (i < 6) {
+      const auto &p = node.params[i];
+      var_types_[p.name] = p.type;
+      var_pointer_level_[p.name] = p.pointer_level;
+      if (p.is_func_ptr) {
+        is_func_ptr_[p.name] = true;
+      }
+      int offset = get_var_offset(p.name);
+      param_ss << "    movq " << ARG_REGS[i] << ", -"
+               << offset << "(%rbp)\n";
+    } else {
+      unsupported(node, "more than 6 function parameters");
+    }
+  }
+
+  std::ostringstream body_ss;
+  std::ostream *orig_out = out_;
+  out_ = &body_ss;
+
+  if (node.body) {
+    node.body->accept(*this);
+  }
+
+  out_ = orig_out;
+
+  int frame_size = (current_offset_ + 16 > 128) ? ((current_offset_ + 16 + 15) & ~15) : 128;
 
   emit_raw(".globl " + node.name);
   emit_raw(node.name + ":");
@@ -230,27 +382,8 @@ void X86_64CodeGenerator::visit(const FuncDefNode &node) {
   emit_line("movq %rsp, %rbp");
   emit_line("subq $" + std::to_string(frame_size) + ", %rsp");
 
-  static const char *const ARG_REGS[] = {
-      "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
-
-  for (size_t i = 0; i < node.params.size(); ++i) {
-    if (i < 6) {
-      const auto &p = node.params[i];
-      var_types_[p.name] = p.type;
-      if (p.is_func_ptr) {
-        is_func_ptr_[p.name] = true;
-      }
-      int offset = get_var_offset(p.name);
-      emit_line("movq " + std::string(ARG_REGS[i]) + ", -" +
-                std::to_string(offset) + "(%rbp)");
-    } else {
-      unsupported(node, "more than 6 function parameters");
-    }
-  }
-
-  if (node.body) {
-    node.body->accept(*this);
-  }
+  *out_ << param_ss.str();
+  *out_ << body_ss.str();
 
   emit_raw(ret_label_ + ":");
   emit_line("leave");
@@ -291,22 +424,29 @@ void X86_64CodeGenerator::visit(const CallNode &node) {
     emit_line("popq " + std::string(ARG_REGS[i]));
   }
 
+  // Dual-load Windows x64 ABI registers so external functions (e.g. puts, printf)
+  // work seamlessly on Windows (MinGW/MSVC) as well as SysV AMD64 (Linux).
+  if (node.args.size() >= 4) emit_line("movq %rcx, %r9");
+  if (node.args.size() >= 3) emit_line("movq %rdx, %r8");
+  if (node.args.size() >= 2) emit_line("movq %rsi, %rdx");
+  if (node.args.size() >= 1) emit_line("movq %rdi, %rcx");
+
   if (is_indirect) {
     emit_line("popq %r11");
     emit_line("movq %rsp, %r10");
     emit_line("andq $-16, %rsp");
     emit_line("pushq %r10");
-    emit_line("subq $8, %rsp");
+    emit_line("subq $40, %rsp");
     emit_line("call *%r11");
-    emit_line("addq $8, %rsp");
+    emit_line("addq $40, %rsp");
     emit_line("popq %rsp");
   } else {
     emit_line("movq %rsp, %r11");
     emit_line("andq $-16, %rsp");
     emit_line("pushq %r11");
-    emit_line("subq $8, %rsp");
+    emit_line("subq $40, %rsp");
     emit_line("call " + node.callee);
-    emit_line("addq $8, %rsp");
+    emit_line("addq $40, %rsp");
     emit_line("popq %rsp");
   }
 }
@@ -329,6 +469,7 @@ void X86_64CodeGenerator::visit(const CompoundNode &node) {
 
 void X86_64CodeGenerator::visit(const VarDeclNode &node) {
   var_types_[node.name] = node.data_type;
+  var_pointer_level_[node.name] = node.pointer_level;
   if (node.is_func_ptr) {
     is_func_ptr_[node.name] = true;
   }
@@ -339,7 +480,9 @@ void X86_64CodeGenerator::visit(const VarDeclNode &node) {
     int offset = get_var_offset(node.name);
     if (node.init) {
       node.init->accept(*this);
-      if (node.data_type == DataType::Short && node.pointer_level == 0 && !node.is_func_ptr) {
+      if (node.data_type == DataType::Char && node.pointer_level == 0 && !is_func_ptr(node.name)) {
+        emit_line("movb %al, -" + std::to_string(offset) + "(%rbp)");
+      } else if (node.data_type == DataType::Short && node.pointer_level == 0 && !is_func_ptr(node.name)) {
         emit_line("movw %ax, -" + std::to_string(offset) + "(%rbp)");
       } else {
         emit_line("movq %rax, -" + std::to_string(offset) + "(%rbp)");
@@ -351,7 +494,8 @@ void X86_64CodeGenerator::visit(const VarDeclNode &node) {
     is_array_[node.name] = true;
     array_sizes_[node.name] = node.array_size;
     int elem_size = 8;
-    if (node.data_type == DataType::Short && node.pointer_level == 0) elem_size = 2;
+    if (node.data_type == DataType::Char && node.pointer_level == 0) elem_size = 1;
+    else if (node.data_type == DataType::Short && node.pointer_level == 0) elem_size = 2;
     else if (node.data_type == DataType::Struct || node.data_type == DataType::Union) {
       elem_size = get_type_size(node.data_type, node.struct_name);
     }
@@ -368,7 +512,9 @@ void X86_64CodeGenerator::visit(const VarDeclNode &node) {
         if (init_list->elements[i]) {
           init_list->elements[i]->accept(*this);
           int elem_offset = base_offset - static_cast<int>(i) * elem_size;
-          if (elem_size == 2) {
+          if (elem_size == 1) {
+            emit_line("movb %al, -" + std::to_string(elem_offset) + "(%rbp)");
+          } else if (elem_size == 2) {
             emit_line("movw %ax, -" + std::to_string(elem_offset) + "(%rbp)");
           } else {
             emit_line("movq %rax, -" + std::to_string(elem_offset) + "(%rbp)");
@@ -392,7 +538,9 @@ void X86_64CodeGenerator::visit(const VarDeclNode &node) {
           if (init_list->elements[i]) {
             init_list->elements[i]->accept(*this);
             int elem_offset = base_offset - st_info.members[i].offset;
-            if (st_info.members[i].type == DataType::Short && st_info.members[i].pointer_level == 0) {
+            if (st_info.members[i].type == DataType::Char && st_info.members[i].pointer_level == 0) {
+              emit_line("movb %al, -" + std::to_string(elem_offset) + "(%rbp)");
+            } else if (st_info.members[i].type == DataType::Short && st_info.members[i].pointer_level == 0) {
               emit_line("movw %ax, -" + std::to_string(elem_offset) + "(%rbp)");
             } else {
               emit_line("movq %rax, -" + std::to_string(elem_offset) + "(%rbp)");
@@ -420,11 +568,40 @@ void X86_64CodeGenerator::visit(const ArrayAccessNode &node) {
     emit_line("movq $0, %rax");
   }
 
-  emit_line("leaq -" + std::to_string(base_offset) + "(%rbp), %r11");
-  if (get_var_type(ident->name) == DataType::Short) {
+  bool is_local_arr = false;
+  auto arr_it = is_array_.find(ident->name);
+  if (arr_it != is_array_.end() && arr_it->second) {
+    is_local_arr = true;
+  }
+
+  if (is_local_arr) {
+    emit_line("leaq -" + std::to_string(base_offset) + "(%rbp), %r11");
+  } else {
+    emit_line("movq -" + std::to_string(base_offset) + "(%rbp), %r11");
+  }
+
+  int ptr_level = 0;
+  DataType elem_type = get_expr_type(ident, ptr_level);
+  bool is_elem_char = (elem_type == DataType::Char && ptr_level <= 1);
+  bool is_elem_short = (elem_type == DataType::Short && ptr_level <= 1);
+  if (is_elem_char) {
+    emit_line("movsbq (%r11, %rax, 1), %rax");
+  } else if (is_elem_short) {
     emit_line("movswq (%r11, %rax, 2), %rax");
   } else {
-    emit_line("movq (%r11, %rax, 8), %rax");
+    int elem_size = 8;
+    if (elem_type == DataType::Struct || elem_type == DataType::Union) {
+      auto st_it = var_struct_name_.find(ident->name);
+      if (st_it != var_struct_name_.end()) {
+        elem_size = get_type_size(elem_type, st_it->second);
+      }
+    }
+    if (elem_size == 8) {
+      emit_line("movq (%r11, %rax, 8), %rax");
+    } else {
+      emit_line("imulq $" + std::to_string(elem_size) + ", %rax");
+      emit_line("movq (%r11, %rax), %rax");
+    }
   }
 }
 
@@ -461,11 +638,40 @@ void X86_64CodeGenerator::visit(const AssignNode &node) {
     }
 
     emit_line("popq %r10");
-    emit_line("leaq -" + std::to_string(base_offset) + "(%rbp), %r11");
-    if (get_var_type(ident->name) == DataType::Short) {
+    bool is_local_arr = false;
+    auto arr_it = is_array_.find(ident->name);
+    if (arr_it != is_array_.end() && arr_it->second) {
+      is_local_arr = true;
+    }
+
+    if (is_local_arr) {
+      emit_line("leaq -" + std::to_string(base_offset) + "(%rbp), %r11");
+    } else {
+      emit_line("movq -" + std::to_string(base_offset) + "(%rbp), %r11");
+    }
+
+    int ptr_level = 0;
+    DataType elem_type = get_expr_type(ident, ptr_level);
+    bool is_elem_char = (elem_type == DataType::Char && ptr_level <= 1);
+    bool is_elem_short = (elem_type == DataType::Short && ptr_level <= 1);
+    if (is_elem_char) {
+      emit_line("movb %al, (%r11, %r10, 1)");
+    } else if (is_elem_short) {
       emit_line("movw %ax, (%r11, %r10, 2)");
     } else {
-      emit_line("movq %rax, (%r11, %r10, 8)");
+      int elem_size = 8;
+      if (elem_type == DataType::Struct || elem_type == DataType::Union) {
+        auto st_it = var_struct_name_.find(ident->name);
+        if (st_it != var_struct_name_.end()) {
+          elem_size = get_type_size(elem_type, st_it->second);
+        }
+      }
+      if (elem_size == 8) {
+        emit_line("movq %rax, (%r11, %r10, 8)");
+      } else {
+        emit_line("imulq $" + std::to_string(elem_size) + ", %r10");
+        emit_line("movq %rax, (%r11, %r10)");
+      }
     }
     return;
   }
@@ -485,7 +691,15 @@ void X86_64CodeGenerator::visit(const AssignNode &node) {
     }
 
     emit_line("popq %r10");
-    emit_line("movq %rax, (%r10)");
+    int ptr_level = 0;
+    DataType pt = get_expr_type(unary->expr.get(), ptr_level);
+    if (pt == DataType::Char && ptr_level == 1) {
+      emit_line("movb %al, (%r10)");
+    } else if (pt == DataType::Short && ptr_level == 1) {
+      emit_line("movw %ax, (%r10)");
+    } else {
+      emit_line("movq %rax, (%r10)");
+    }
     return;
   }
 
@@ -513,7 +727,9 @@ void X86_64CodeGenerator::visit(const AssignNode &node) {
       }
       emit_line("movq %rax, %r11");
       emit_line("popq %rax");
-      if (m.type == DataType::Short && m.pointer_level == 0) {
+      if (m.type == DataType::Char && m.pointer_level == 0) {
+        emit_line("movb %al, (%r11)");
+      } else if (m.type == DataType::Short && m.pointer_level == 0) {
         emit_line("movw %ax, (%r11)");
       } else {
         emit_line("movq %rax, (%r11)");
@@ -527,7 +743,9 @@ void X86_64CodeGenerator::visit(const AssignNode &node) {
         if (node.right) {
           node.right->accept(*this);
         }
-        if (m.type == DataType::Short && m.pointer_level == 0) {
+        if (m.type == DataType::Char && m.pointer_level == 0) {
+          emit_line("movb %al, -" + std::to_string(mem_offset) + "(%rbp)");
+        } else if (m.type == DataType::Short && m.pointer_level == 0) {
           emit_line("movw %ax, -" + std::to_string(mem_offset) + "(%rbp)");
         } else {
           emit_line("movq %rax, -" + std::to_string(mem_offset) + "(%rbp)");
@@ -547,7 +765,9 @@ void X86_64CodeGenerator::visit(const AssignNode &node) {
   if (node.right) {
     node.right->accept(*this);
   }
-  if (get_var_type(ident->name) == DataType::Short && !is_func_ptr_[ident->name]) {
+  if (get_var_type(ident->name) == DataType::Char && get_var_pointer_level(ident->name) == 0 && !is_func_ptr(ident->name)) {
+    emit_line("movb %al, -" + std::to_string(offset) + "(%rbp)");
+  } else if (get_var_type(ident->name) == DataType::Short && get_var_pointer_level(ident->name) == 0 && !is_func_ptr(ident->name)) {
     emit_line("movw %ax, -" + std::to_string(offset) + "(%rbp)");
   } else {
     emit_line("movq %rax, -" + std::to_string(offset) + "(%rbp)");
@@ -556,6 +776,12 @@ void X86_64CodeGenerator::visit(const AssignNode &node) {
 
 void X86_64CodeGenerator::visit(const IntLitNode &node) {
   emit_line("movq $" + std::to_string(node.val) + ", %rax");
+}
+
+void X86_64CodeGenerator::visit(const StringLitNode &node) {
+  std::string lbl = new_label(".LC");
+  string_literals_.push_back({lbl, node.value});
+  emit_line("leaq " + lbl + "(%rip), %rax");
 }
 
 void X86_64CodeGenerator::visit(const IdentifierNode &node) {
@@ -571,7 +797,9 @@ void X86_64CodeGenerator::visit(const IdentifierNode &node) {
     emit_line("leaq -" + std::to_string(offset) + "(%rbp), %rax");
     return;
   }
-  if (get_var_type(node.name) == DataType::Short && !is_func_ptr_[node.name]) {
+  if (get_var_type(node.name) == DataType::Char && get_var_pointer_level(node.name) == 0 && !is_func_ptr(node.name)) {
+    emit_line("movsbq -" + std::to_string(offset) + "(%rbp), %rax");
+  } else if (get_var_type(node.name) == DataType::Short && get_var_pointer_level(node.name) == 0 && !is_func_ptr(node.name)) {
     emit_line("movswq -" + std::to_string(offset) + "(%rbp), %rax");
   } else {
     emit_line("movq -" + std::to_string(offset) + "(%rbp), %rax");
@@ -605,11 +833,40 @@ void X86_64CodeGenerator::visit(const UnaryOpNode &node) {
       } else {
         emit_line("movq $0, %rax");
       }
-      emit_line("leaq -" + std::to_string(base_offset) + "(%rbp), %r11");
-      if (get_var_type(ident->name) == DataType::Short) {
+      bool is_local_arr = false;
+      auto arr_it = is_array_.find(ident->name);
+      if (arr_it != is_array_.end() && arr_it->second) {
+        is_local_arr = true;
+      }
+
+      if (is_local_arr) {
+        emit_line("leaq -" + std::to_string(base_offset) + "(%rbp), %r11");
+      } else {
+        emit_line("movq -" + std::to_string(base_offset) + "(%rbp), %r11");
+      }
+
+      int ptr_level = 0;
+      DataType elem_type = get_expr_type(ident, ptr_level);
+      bool is_elem_char = (elem_type == DataType::Char && ptr_level <= 1);
+      bool is_elem_short = (elem_type == DataType::Short && ptr_level <= 1);
+      if (is_elem_char) {
+        emit_line("leaq (%r11, %rax, 1), %rax");
+      } else if (is_elem_short) {
         emit_line("leaq (%r11, %rax, 2), %rax");
       } else {
-        emit_line("leaq (%r11, %rax, 8), %rax");
+        int elem_size = 8;
+        if (elem_type == DataType::Struct || elem_type == DataType::Union) {
+          auto st_it = var_struct_name_.find(ident->name);
+          if (st_it != var_struct_name_.end()) {
+            elem_size = get_type_size(elem_type, st_it->second);
+          }
+        }
+        if (elem_size == 8) {
+          emit_line("leaq (%r11, %rax, 8), %rax");
+        } else {
+          emit_line("imulq $" + std::to_string(elem_size) + ", %rax");
+          emit_line("leaq (%r11, %rax), %rax");
+        }
       }
       return;
     }
@@ -620,7 +877,11 @@ void X86_64CodeGenerator::visit(const UnaryOpNode &node) {
       if (it == struct_defs_.end()) {
         unsupported(node, "unknown struct type '" + st_name + "'");
       }
-      const auto &m = it->second.member_map.at(mem->member);
+      auto mit = it->second.member_map.find(mem->member);
+      if (mit == it->second.member_map.end()) {
+        unsupported(node, "unknown member '" + mem->member + "' in struct '" + st_name + "'");
+      }
+      const auto &m = mit->second;
       if (mem->is_arrow) {
         mem->object->accept(*this);
         if (m.offset > 0) {
@@ -646,7 +907,15 @@ void X86_64CodeGenerator::visit(const UnaryOpNode &node) {
     } else {
       emit_line("movq $0, %rax");
     }
-    emit_line("movq (%rax), %rax");
+    int ptr_level = 0;
+    DataType pt = get_expr_type(node.expr.get(), ptr_level);
+    if (pt == DataType::Char && ptr_level == 1) {
+      emit_line("movsbq (%rax), %rax");
+    } else if (pt == DataType::Short && ptr_level == 1) {
+      emit_line("movswq (%rax), %rax");
+    } else {
+      emit_line("movq (%rax), %rax");
+    }
     return;
   }
 
@@ -1028,7 +1297,9 @@ void X86_64CodeGenerator::visit(const MemberAccessNode &node) {
     if (m.offset > 0) {
       emit_line("addq $" + std::to_string(m.offset) + ", %rax");
     }
-    if (m.type == DataType::Short && m.pointer_level == 0) {
+    if (m.type == DataType::Char && m.pointer_level == 0) {
+      emit_line("movsbq (%rax), %rax");
+    } else if (m.type == DataType::Short && m.pointer_level == 0) {
       emit_line("movswq (%rax), %rax");
     } else {
       emit_line("movq (%rax), %rax");
@@ -1038,7 +1309,9 @@ void X86_64CodeGenerator::visit(const MemberAccessNode &node) {
       auto *ident = static_cast<const IdentifierNode *>(node.object.get());
       int base_offset = get_var_offset(ident->name);
       int mem_offset = base_offset - m.offset;
-      if (m.type == DataType::Short && m.pointer_level == 0) {
+      if (m.type == DataType::Char && m.pointer_level == 0) {
+        emit_line("movsbq -" + std::to_string(mem_offset) + "(%rbp), %rax");
+      } else if (m.type == DataType::Short && m.pointer_level == 0) {
         emit_line("movswq -" + std::to_string(mem_offset) + "(%rbp), %rax");
       } else {
         emit_line("movq -" + std::to_string(mem_offset) + "(%rbp), %rax");

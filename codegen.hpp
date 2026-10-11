@@ -97,6 +97,7 @@ public:
   void visit(const BinaryOpNode &node) override;
   void visit(const UnaryOpNode &node) override;
   void visit(const IntLitNode &node) override;
+  void visit(const StringLitNode &node) override;
   void visit(const IdentifierNode &node) override;
   void visit(const StructDefNode &node) override;
   void visit(const MemberAccessNode &node) override;

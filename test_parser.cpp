@@ -1282,6 +1282,182 @@ static void test_struct_node() {
   }
 }
 
+static void test_code_review_fixes() {
+  std::cout << "Testing Code Review fixes for Lexer and Parser...\n";
+
+  // 1. Lexer: long identifier (> 127 chars) is not split into two tokens
+  {
+    std::string long_id(200, 'a');
+    std::string src = long_id + ";";
+    Lexer lexer(src);
+    Token tok1 = lexer.next();
+    assert(tok1.type == TOK_IDENTIFIER);
+    assert(std::strlen(tok1.text) == 127);
+    Token tok2 = lexer.next();
+    assert(tok2.type == TOK_SEMICOLON); // NOT an identifier continuation!
+  }
+
+  // 2. Lexer: non-null-terminated string_view
+  {
+    std::string full = "int x = 10; float y = 20;";
+    std::string_view slice(full.data() + 4, 6); // "x = 10"
+    Lexer lexer(slice);
+    Token t1 = lexer.next();
+    assert(t1.type == TOK_IDENTIFIER);
+    assert(std::string(t1.text) == "x");
+    Token t2 = lexer.next();
+    assert(t2.type == TOK_ASSIGN);
+    Token t3 = lexer.next();
+    assert(t3.type == TOK_INT_LIT);
+    assert(t3.value.int_val == 10);
+    Token t4 = lexer.next();
+    assert(t4.type == TOK_EOF);
+  }
+
+  // 3. Lexer: unterminated string/char literals
+  {
+    Lexer l1("\"unterminated string");
+    Token t1 = l1.next();
+    assert(t1.type == TOK_UNKNOWN);
+
+    Lexer l2("'a");
+    Token t2 = l2.next();
+    assert(t2.type == TOK_UNKNOWN);
+  }
+
+  // 4. Lexer: peek(k) bounds check throws std::out_of_range
+  {
+    Lexer lexer("int a = 1;");
+    bool threw = false;
+    try {
+      lexer.peek(5);
+    } catch (const std::out_of_range &) {
+      threw = true;
+    }
+    assert(threw);
+
+    threw = false;
+    try {
+      lexer.peek(0);
+    } catch (const std::out_of_range &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+
+  // 5. Lexer: hex and extra escape sequences
+  {
+    Lexer lexer("'\\x41' '\\a' '\\b' '\\f' '\\v'");
+    Token t1 = lexer.next();
+    assert(t1.type == TOK_CHAR_LIT);
+    assert(t1.value.int_val == 'A');
+    Token t2 = lexer.next();
+    assert(t2.type == TOK_CHAR_LIT);
+    assert(t2.value.int_val == '\a');
+    Token t3 = lexer.next();
+    assert(t3.type == TOK_CHAR_LIT);
+    assert(t3.value.int_val == '\b');
+    Token t4 = lexer.next();
+    assert(t4.type == TOK_CHAR_LIT);
+    assert(t4.value.int_val == '\f');
+    Token t5 = lexer.next();
+    assert(t5.type == TOK_CHAR_LIT);
+    assert(t5.value.int_val == '\v');
+  }
+
+  // 6. Parser: Bitwise operators
+  {
+    auto prog = parse_source("int x = (1 << 2) | (3 >> 1) ^ (4 & 5);\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::VarDecl);
+  }
+
+  // 7. Parser: Char literals in expressions
+  {
+    auto prog = parse_source("int ch = 'Z';\n");
+    assert(prog->statements.size() == 1);
+    auto *vd = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(vd->init != nullptr);
+    assert(vd->init->getType() == ASTNodeType::IntLit);
+    assert(static_cast<IntLitNode *>(vd->init.get())->val == 'Z');
+  }
+
+  // 8. Parser: Invalid lvalue in assignment reports error
+  {
+    bool threw = false;
+    try {
+      parse_source("10 = 20;\n");
+    } catch (const ParseException &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+}
+
+static void test_char_and_string_literals() {
+  std::cout << "Testing Char and String Literals...\n";
+
+  // 1. char declaration with char literal
+  {
+    auto prog = parse_source("char c = 'A';\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::VarDecl);
+    auto *vd = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(vd->data_type == DataType::Char);
+    assert(vd->name == "c");
+    assert(vd->init != nullptr);
+    assert(vd->init->getType() == ASTNodeType::IntLit);
+    assert(static_cast<IntLitNode *>(vd->init.get())->val == 'A');
+  }
+
+  // 2. char pointer with string literal
+  {
+    auto prog = parse_source("char *msg = \"Hello, World!\";\n");
+    assert(prog->statements.size() == 1);
+    auto *vd = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(vd->data_type == DataType::Char);
+    assert(vd->pointer_level == 1);
+    assert(vd->name == "msg");
+    assert(vd->init != nullptr);
+    assert(vd->init->getType() == ASTNodeType::StringLit);
+    assert(static_cast<StringLitNode *>(vd->init.get())->value == "Hello, World!");
+  }
+
+  // 3. char array
+  {
+    auto prog = parse_source("char arr[20];\n");
+    assert(prog->statements.size() == 1);
+    auto *vd = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(vd->data_type == DataType::Char);
+    assert(vd->is_array == true);
+    assert(vd->array_size == 20);
+  }
+
+  // 4. string literal concatenation
+  {
+    auto prog = parse_source("char *s = \"Hello, \" \"World!\";\n");
+    assert(prog->statements.size() == 1);
+    auto *vd = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(vd->init->getType() == ASTNodeType::StringLit);
+    assert(static_cast<StringLitNode *>(vd->init.get())->value == "Hello, World!");
+  }
+
+  // 5. function call with string literal
+  {
+    auto prog = parse_source("int main() { puts(\"test\"); return 0; }\n");
+    assert(prog->statements.size() == 1);
+    auto *fn = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(fn->body != nullptr);
+    auto *cp = static_cast<CompoundNode *>(fn->body.get());
+    assert(cp->statements[0]->getType() == ASTNodeType::Call);
+    auto *call = static_cast<CallNode *>(cp->statements[0].get());
+    assert(call->callee == "puts");
+    assert(call->args.size() == 1);
+    assert(call->args[0]->getType() == ASTNodeType::StringLit);
+    assert(static_cast<StringLitNode *>(call->args[0].get())->value == "test");
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running AST & Parser Test Suite\n";
@@ -1314,9 +1490,11 @@ int main() {
   test_pointer_node();
   test_func_ptr_node();
   test_struct_node();
+  test_code_review_fixes();
+  test_char_and_string_literals();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (27/27)\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (29/29)\n";
   std::cout << "========================================\n";
   return 0;
 }

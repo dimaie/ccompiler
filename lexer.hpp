@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 /**
@@ -148,6 +149,7 @@ private:
   char parse_escape_sequence();
   Token scan_token();
 
+  std::string owned_src_;
   const char *src_{""};
   size_t cursor_{0};
   int line_{1};

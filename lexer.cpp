@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -46,6 +47,9 @@ Lexer::Lexer(const char *source) { init(source); }
 Lexer::Lexer(std::string_view source) { init(source); }
 
 void Lexer::init(const char *source) {
+  if (source != owned_src_.c_str()) {
+    owned_src_.clear();
+  }
   src_ = source ? source : "";
   cursor_ = 0;
   line_ = 1;
@@ -60,7 +64,10 @@ void Lexer::init(const char *source) {
   }
 }
 
-void Lexer::init(std::string_view source) { init(source.data()); }
+void Lexer::init(std::string_view source) {
+  owned_src_ = std::string(source);
+  init(owned_src_.c_str());
+}
 
 char Lexer::peek_char() const { return src_[cursor_]; }
 
@@ -128,6 +135,24 @@ char Lexer::parse_escape_sequence() {
     return '\'';
   case '\"':
     return '\"';
+  case 'a':
+    return '\a';
+  case 'b':
+    return '\b';
+  case 'f':
+    return '\f';
+  case 'v':
+    return '\v';
+  case 'x': {
+    int val = 0;
+    while (std::isxdigit(static_cast<unsigned char>(peek_char()))) {
+      char h = advance_char();
+      val = val * 16 + (std::isdigit(static_cast<unsigned char>(h))
+                            ? (h - '0')
+                            : (std::tolower(static_cast<unsigned char>(h)) - 'a' + 10));
+    }
+    return static_cast<char>(val);
+  }
   default:
     return esc;
   }
@@ -152,10 +177,12 @@ Token Lexer::scan_token() {
   // 1. Identifiers and Keywords: [a-zA-Z_][a-zA-Z0-9_]*
   if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
     size_t len = 0;
-    while ((std::isalnum(static_cast<unsigned char>(peek_char())) ||
-            peek_char() == '_') &&
-           len < sizeof(tok.text) - 1) {
-      tok.text[len++] = advance_char();
+    while (std::isalnum(static_cast<unsigned char>(peek_char())) ||
+           peek_char() == '_') {
+      char ch = advance_char();
+      if (len < sizeof(tok.text) - 1) {
+        tok.text[len++] = ch;
+      }
     }
     tok.text[len] = '\0';
     tok.type = TOK_IDENTIFIER;
@@ -180,11 +207,14 @@ Token Lexer::scan_token() {
       tok.text[len++] = advance_char();
     }
 
-    while (len < sizeof(tok.text) - 1) {
+    while (true) {
       char p = peek_char();
       if (is_hex ? std::isxdigit(static_cast<unsigned char>(p))
                  : std::isdigit(static_cast<unsigned char>(p))) {
-        tok.text[len++] = advance_char();
+        char ch = advance_char();
+        if (len < sizeof(tok.text) - 1) {
+          tok.text[len++] = ch;
+        }
       } else {
         break;
       }
@@ -199,36 +229,51 @@ Token Lexer::scan_token() {
   if (c == '"') {
     advance_char();
     size_t len = 0;
-    while (peek_char() != '"' && peek_char() != '\0' &&
-           len < sizeof(tok.text) - 1) {
+    bool terminated = false;
+    while (peek_char() != '\0') {
+      if (peek_char() == '"') {
+        advance_char();
+        terminated = true;
+        break;
+      }
       if (peek_char() == '\\') {
         advance_char();
-        tok.text[len++] = parse_escape_sequence();
+        char esc = parse_escape_sequence();
+        if (len < sizeof(tok.text) - 1) {
+          tok.text[len++] = esc;
+        }
       } else {
-        tok.text[len++] = advance_char();
+        char ch = advance_char();
+        if (len < sizeof(tok.text) - 1) {
+          tok.text[len++] = ch;
+        }
       }
     }
-    if (peek_char() == '"') {
-      advance_char();
-    }
     tok.text[len] = '\0';
-    tok.type = TOK_STRING_LIT;
+    tok.type = terminated ? TOK_STRING_LIT : TOK_UNKNOWN;
     return tok;
   }
 
   // 4. Character Literals: '...'
   if (c == '\'') {
     advance_char();
+    if (peek_char() == '\0' || peek_char() == '\'') {
+      tok.type = TOK_UNKNOWN;
+      if (peek_char() == '\'') advance_char();
+      return tok;
+    }
     char ch_val = advance_char();
     if (ch_val == '\\') {
       ch_val = parse_escape_sequence();
     }
     if (peek_char() == '\'') {
       advance_char();
+      tok.type = TOK_CHAR_LIT;
+      tok.value.int_val = static_cast<unsigned char>(ch_val);
+      std::snprintf(tok.text, sizeof(tok.text), "'%c'", ch_val);
+      return tok;
     }
-    tok.type = TOK_CHAR_LIT;
-    tok.value.int_val = ch_val;
-    std::snprintf(tok.text, sizeof(tok.text), "'%c'", ch_val);
+    tok.type = TOK_UNKNOWN;
     return tok;
   }
 
@@ -401,14 +446,10 @@ Token Lexer::next() {
 }
 
 Token Lexer::peek(size_t k) {
-  if (k < 1) {
-    k = 1;
+  if (k < 1 || k > LOOKAHEAD_BUFFER) {
+    throw std::out_of_range("Lookahead index out of range (must be 1..4)");
   }
-  if (k > LOOKAHEAD_BUFFER) {
-    k = LOOKAHEAD_BUFFER;
-  }
-  while (lookahead_count_ < static_cast<int>(k) &&
-         lookahead_count_ < static_cast<int>(LOOKAHEAD_BUFFER)) {
+  while (lookahead_count_ < static_cast<int>(k)) {
     lookahead_[lookahead_count_++] = scan_token();
   }
   return lookahead_[k - 1];

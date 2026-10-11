@@ -40,6 +40,7 @@ int ARM64CodeGenerator::get_type_size(DataType type, const std::string &st_name)
     }
     return 8;
   }
+  if (type == DataType::Char) return 1;
   if (type == DataType::Short) return 2;
   return 8;
 }

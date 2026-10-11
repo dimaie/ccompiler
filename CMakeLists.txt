@@ -9,6 +9,7 @@ if (MSVC)
     add_compile_options(/W4 /Zi)
 else()
     add_compile_options(-Wall -Wextra -g)
+    add_link_options(-static -static-libgcc -static-libstdc++)
 endif()
 
 set(PARSER_SOURCES
@@ -25,6 +26,7 @@ set(CODEGEN_SOURCES
     codegen_arm64.cpp
     codegen_avr.cpp
     codegen_c.cpp
+    assembler_linker.cpp
 )
 
 # Compiler executable

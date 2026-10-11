@@ -39,6 +39,7 @@ public:
   void visit(const BinaryOpNode &node) override;
   void visit(const UnaryOpNode &node) override;
   void visit(const IntLitNode &node) override;
+  void visit(const StringLitNode &node) override;
   void visit(const IdentifierNode &node) override;
   void visit(const StructDefNode &node) override;
   void visit(const MemberAccessNode &node) override;
@@ -48,6 +49,8 @@ private:
   int indent_{0};
 
   void print_indent();
+  void emit_statement(const ASTNode *stmt);
+  static bool statement_needs_semicolon(const ASTNode *node);
 };
 
 #endif // CODEGEN_C_HPP

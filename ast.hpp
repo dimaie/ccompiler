@@ -31,6 +31,7 @@ enum class ASTNodeType {
   BinaryOp,
   UnaryOp,
   IntLit,
+  StringLit,
   Identifier,
   StructDef,
   MemberAccess
@@ -38,6 +39,7 @@ enum class ASTNodeType {
 
 enum class DataType {
   Void,
+  Char,
   Int,
   Short,
   Long,
@@ -50,6 +52,8 @@ inline const char *data_type_str(DataType type) {
   switch (type) {
   case DataType::Void:
     return "void";
+  case DataType::Char:
+    return "char";
   case DataType::Short:
     return "short";
   case DataType::Long:
@@ -130,6 +134,7 @@ class AssignNode;
 class BinaryOpNode;
 class UnaryOpNode;
 class IntLitNode;
+class StringLitNode;
 class IdentifierNode;
 class StructDefNode;
 class MemberAccessNode;
@@ -163,6 +168,7 @@ public:
   virtual void visit(const BinaryOpNode &node) = 0;
   virtual void visit(const UnaryOpNode &node) = 0;
   virtual void visit(const IntLitNode &node) = 0;
+  virtual void visit(const StringLitNode &node) = 0;
   virtual void visit(const IdentifierNode &node) = 0;
   virtual void visit(const StructDefNode &node) = 0;
   virtual void visit(const MemberAccessNode &node) = 0;
@@ -714,6 +720,22 @@ public:
   void print(int indent = 0) const override {
     print_indent(indent);
     std::cout << "IntLit: " << val << "\n";
+  }
+};
+
+class StringLitNode : public ASTNode {
+public:
+  std::string value;
+
+  StringLitNode(int line, std::string value)
+      : ASTNode(line), value(std::move(value)) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::StringLit; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    std::cout << "StringLit: \"" << value << "\"\n";
   }
 };
 

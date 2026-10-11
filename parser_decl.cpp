@@ -3,13 +3,17 @@
 
 bool Parser::is_type_specifier(TokenType type) const {
   return type == TOK_KW_INT || type == TOK_KW_SHORT || type == TOK_KW_LONG ||
-         type == TOK_KW_VOID || type == TOK_KW_STRUCT || type == TOK_KW_UNION;
+         type == TOK_KW_CHAR || type == TOK_KW_VOID || type == TOK_KW_STRUCT ||
+         type == TOK_KW_UNION;
 }
 
 DataType Parser::parse_type_specifier() {
   Token t = peek();
   if (match(TOK_KW_VOID)) {
     return DataType::Void;
+  }
+  if (match(TOK_KW_CHAR)) {
+    return DataType::Char;
   }
   if (match(TOK_KW_SHORT)) {
     match(TOK_KW_INT); // optional 'int' after 'short'
@@ -35,7 +39,33 @@ DataType Parser::parse_type_specifier() {
     }
     return DataType::Int;
   }
-  parse_error(t, "Expected type specifier ('int', 'short', 'long', or 'void')");
+  parse_error(t, "Expected type specifier ('int', 'short', 'long', 'char', or 'void')");
+  return DataType::Int;
+}
+
+static std::vector<DataType> parse_func_ptr_param_list(Parser *parser, Lexer *lexer) {
+  std::vector<DataType> param_types;
+  if (parser->peek().type != TOK_RPAREN) {
+    if (parser->peek().type == TOK_KW_VOID && parser->peek(2).type == TOK_RPAREN) {
+      lexer->next(); // consume 'void'
+    } else {
+      while (true) {
+        DataType pt = parser->parse_type_specifier();
+        while (parser->match(TOK_STAR)) {
+          // ignore star on prototype param
+        }
+        if (parser->peek().type == TOK_IDENTIFIER) {
+          lexer->next(); // optional param name in prototype
+        }
+        param_types.push_back(pt);
+        if (parser->match(TOK_COMMA)) {
+          continue;
+        }
+        break;
+      }
+    }
+  }
+  return param_types;
 }
 
 std::unique_ptr<VarDeclNode> Parser::parse_func_ptr_decl(DataType return_type) {
@@ -50,27 +80,7 @@ std::unique_ptr<VarDeclNode> Parser::parse_func_ptr_decl(DataType return_type) {
   Token id_tok = expect(TOK_IDENTIFIER, "Expected function pointer name");
   expect(TOK_RPAREN, "Expected ')' after function pointer name");
   expect(TOK_LPAREN, "Expected '(' for function pointer parameter list");
-  std::vector<DataType> param_types;
-  if (peek().type != TOK_RPAREN) {
-    if (peek().type == TOK_KW_VOID && peek(2).type == TOK_RPAREN) {
-      lexer_->next(); // consume 'void'
-    } else {
-      while (true) {
-        DataType pt = parse_type_specifier();
-        while (match(TOK_STAR)) {
-          // ignore star on prototype param
-        }
-        if (peek().type == TOK_IDENTIFIER) {
-          lexer_->next(); // optional param name in prototype
-        }
-        param_types.push_back(pt);
-        if (match(TOK_COMMA)) {
-          continue;
-        }
-        break;
-      }
-    }
-  }
+  std::vector<DataType> param_types = parse_func_ptr_param_list(this, lexer_);
   expect(TOK_RPAREN, "Expected ')' after parameters");
   std::unique_ptr<ASTNode> init = nullptr;
   if (match(TOK_ASSIGN)) {
@@ -213,21 +223,7 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
           Token param_name = expect(TOK_IDENTIFIER, "Expected parameter name");
           expect(TOK_RPAREN, "Expected ')' after parameter name");
           expect(TOK_LPAREN, "Expected '(' for parameter list");
-          std::vector<DataType> p_param_types;
-          if (peek().type != TOK_RPAREN) {
-            if (peek().type == TOK_KW_VOID && peek(2).type == TOK_RPAREN) {
-              lexer_->next();
-            } else {
-              while (true) {
-                DataType pt = parse_type_specifier();
-                while (match(TOK_STAR)) {}
-                if (peek().type == TOK_IDENTIFIER) lexer_->next();
-                p_param_types.push_back(pt);
-                if (match(TOK_COMMA)) continue;
-                break;
-              }
-            }
-          }
+          std::vector<DataType> p_param_types = parse_func_ptr_param_list(this, lexer_);
           expect(TOK_RPAREN, "Expected ')' after parameter list");
           Param p;
           p.type = param_type;

@@ -13,12 +13,17 @@ struct BinaryOpInfo {
 const std::unordered_map<TokenType, BinaryOpInfo> BINARY_OPS = {
     {TOK_LOGIC_OR,   {2,  false}}, // ||
     {TOK_LOGIC_AND,  {3,  false}}, // &&
+    {TOK_PIPE,       {4,  false}}, // |
+    {TOK_CARET,      {5,  false}}, // ^
+    {TOK_AMP,        {6,  false}}, // &
     {TOK_EQUAL,      {7,  false}}, // ==
     {TOK_NOT_EQUAL,  {7,  false}}, // !=
     {TOK_LESS,       {8,  false}}, // <
     {TOK_LESS_EQ,    {8,  false}}, // <=
     {TOK_GREATER,    {8,  false}}, // >
     {TOK_GREATER_EQ, {8,  false}}, // >=
+    {TOK_LSHIFT,     {9,  false}}, // <<
+    {TOK_RSHIFT,     {9,  false}}, // >>
     {TOK_PLUS,       {10, false}}, // +
     {TOK_MINUS,      {10, false}}, // -
     {TOK_STAR,       {11, false}}, // *
@@ -35,6 +40,16 @@ std::unique_ptr<ASTNode> Parser::parse_primary() {
   if (t.type == TOK_INT_LIT) {
     lexer_->next();
     expr = std::make_unique<IntLitNode>(t.line, t.value.int_val);
+  } else if (t.type == TOK_CHAR_LIT) {
+    lexer_->next();
+    expr = std::make_unique<IntLitNode>(t.line, t.value.int_val);
+  } else if (t.type == TOK_STRING_LIT) {
+    lexer_->next();
+    std::string s = t.text;
+    while (peek().type == TOK_STRING_LIT) {
+      s += lexer_->next().text;
+    }
+    expr = std::make_unique<StringLitNode>(t.line, std::move(s));
   } else if (t.type == TOK_IDENTIFIER) {
     lexer_->next();
     if (peek().type == TOK_LPAREN) {
@@ -77,7 +92,7 @@ std::unique_ptr<ASTNode> Parser::parse_primary() {
       Token mem_tok = expect(TOK_IDENTIFIER, "Expected member name after '->'");
       expr = std::make_unique<MemberAccessNode>(expr->line, std::move(expr),
                                                 mem_tok.text, true);
-    } else if (peek().type == TOK_LPAREN) {
+    } else if (peek().type == TOK_LPAREN && expr->getType() != ASTNodeType::IntLit) {
       expect(TOK_LPAREN, "Expected '(' after function pointer expression");
       std::vector<std::unique_ptr<ASTNode>> args;
       if (peek().type != TOK_RPAREN) {
@@ -140,7 +155,8 @@ std::unique_ptr<ASTNode> Parser::parse_assignment() {
                         (left->getType() == ASTNodeType::UnaryOp &&
                          static_cast<const UnaryOpNode *>(left.get())->op == TOK_STAR);
     if (!valid_lvalue) {
-      parse_error(peek(), "Left side of assignment must be an identifier, array element, member access, or dereference");
+      Token err_tok{TOK_UNKNOWN, "", left->line, 1, {0}};
+      parse_error(err_tok, "Left side of assignment must be an identifier, array element, member access, or dereference");
     }
     auto right = parse_assignment();
     return std::make_unique<AssignNode>(left->line, std::move(left),
