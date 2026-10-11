@@ -6,39 +6,50 @@
 #include <algorithm>
 #include <stdexcept>
 
-std::unique_ptr<ICodeGenerator> CodeGeneratorFactory::create(TargetArch arch) {
+std::unique_ptr<ICodeGenerator> CodeGeneratorFactory::create(TargetArch arch, const CodeGenOptions &options) {
+  std::unique_ptr<ICodeGenerator> gen;
   switch (arch) {
   case TargetArch::X86_64:
-    return std::make_unique<X86_64CodeGenerator>();
+    gen = std::make_unique<X86_64CodeGenerator>();
+    break;
   case TargetArch::AVR:
-    return std::make_unique<AVRCodeGenerator>();
+    gen = std::make_unique<AVRCodeGenerator>();
+    break;
   case TargetArch::ARM64:
-    return std::make_unique<ARM64CodeGenerator>();
+    gen = std::make_unique<ARM64CodeGenerator>();
+    break;
   case TargetArch::C_Transpiler:
-    return std::make_unique<CCodeGenerator>();
+    gen = std::make_unique<CCodeGenerator>();
+    break;
+  default:
+    throw std::runtime_error("Unsupported target architecture");
   }
-  throw std::runtime_error("Unsupported target architecture");
+  gen->set_options(options);
+  if (gen->get_effective_local_var_storage() == LocalVarStorage::Memory && arch != TargetArch::AVR) {
+    throw UnsupportedFeatureException("local variable storage 'memory'", gen->get_arch_name());
+  }
+  return gen;
 }
 
 std::unique_ptr<ICodeGenerator>
-CodeGeneratorFactory::create(const std::string &arch_name) {
+CodeGeneratorFactory::create(const std::string &arch_name, const CodeGenOptions &options) {
   std::string lower = arch_name;
   std::transform(lower.begin(), lower.end(), lower.begin(),
                  [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
   if (lower == "x86" || lower == "x86_64" || lower == "x86-64" ||
       lower == "amd64") {
-    return create(TargetArch::X86_64);
+    return create(TargetArch::X86_64, options);
   }
   if (lower == "avr" || lower == "arduino" || lower == "atmega328p") {
-    return create(TargetArch::AVR);
+    return create(TargetArch::AVR, options);
   }
   if (lower == "arm" || lower == "arm64" || lower == "aarch64" ||
       lower == "rpi" || lower == "raspberrypi") {
-    return create(TargetArch::ARM64);
+    return create(TargetArch::ARM64, options);
   }
   if (lower == "c" || lower == "c_transpiler") {
-    return create(TargetArch::C_Transpiler);
+    return create(TargetArch::C_Transpiler, options);
   }
 
   throw std::runtime_error("Unknown target architecture: " + arch_name +

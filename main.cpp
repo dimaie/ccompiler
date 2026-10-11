@@ -13,6 +13,7 @@ static void print_usage(const char *prog_name) {
   std::cerr << "Usage: " << prog_name << " [options] <source_file> [libraries...]\n\n"
             << "Options:\n"
             << "  -t, --target <arch>    Target architecture (x86_64, arm64, avr, c) [default: x86_64]\n"
+            << "  --local-vars <mode>    Local variable storage (stack, memory) [default: memory for avr, stack for others]\n"
             << "  -o, --output <file>    Output file [default: a.exe (Windows) / a.out]\n"
             << "  -S                     Stop after compilation phase; output assembly code\n"
             << "  -E                     Stop after preprocessing phase; output preprocessed source\n"
@@ -29,6 +30,7 @@ int main(int argc, char *argv[]) {
   std::string input_filename;
   std::string output_filename;
   std::string target = "x86_64";
+  std::string local_vars_mode = "auto";
   bool show_ast = false;
   bool emit_asm_only = false;
   bool preprocess_only = false;
@@ -47,6 +49,14 @@ int main(int argc, char *argv[]) {
       emit_asm_only = true;
     } else if (arg == "-E") {
       preprocess_only = true;
+    } else if (arg == "--local-vars") {
+      if (i + 1 >= argc) {
+        std::cerr << "Error: Missing argument for --local-vars\n";
+        return 1;
+      }
+      local_vars_mode = argv[++i];
+    } else if (arg.rfind("--local-vars=", 0) == 0) {
+      local_vars_mode = arg.substr(13);
     } else if (arg == "-I") {
       if (i + 1 >= argc) {
         std::cerr << "Error: Missing argument for -I\n";
@@ -211,7 +221,22 @@ int main(int argc, char *argv[]) {
       ast->print(0);
     }
 
-    auto codegen = CodeGeneratorFactory::create(target);
+    LocalVarStorage storage = LocalVarStorage::Auto;
+    if (local_vars_mode == "stack") {
+      storage = LocalVarStorage::Stack;
+    } else if (local_vars_mode == "memory" || local_vars_mode == "static") {
+      storage = LocalVarStorage::Memory;
+    } else if (local_vars_mode == "auto") {
+      storage = LocalVarStorage::Auto;
+    } else {
+      std::cerr << "Error: Invalid argument for --local-vars ('" << local_vars_mode
+                << "'). Expected 'stack' or 'memory'\n";
+      return 1;
+    }
+
+    CodeGenOptions codegen_opts;
+    codegen_opts.local_var_storage = storage;
+    auto codegen = CodeGeneratorFactory::create(target, codegen_opts);
     std::ostringstream generated_out;
     codegen->generate(*ast, generated_out);
 

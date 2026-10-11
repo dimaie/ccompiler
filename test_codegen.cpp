@@ -223,17 +223,37 @@ static void test_avr_codegen() {
                     "} else {\n"
                     "  return 0;\n"
                     "}\n");
+  // Default AVR uses static memory storage (.bss)
   auto gen = CodeGeneratorFactory::create(TargetArch::AVR);
+  assert(gen->get_effective_local_var_storage() == LocalVarStorage::Memory);
   std::string asm_code = gen->generate_to_string(*prog);
 
-  // Check AVR directives and register conventions
+  // Check AVR directives and register conventions in default memory mode
   assert(asm_code.find(".arch atmega328p") != std::string::npos);
-  assert(asm_code.find("push r28") != std::string::npos);
-  assert(asm_code.find("push r29") != std::string::npos);
   assert(asm_code.find("r24") != std::string::npos);
   assert(asm_code.find("r25") != std::string::npos);
-  assert(asm_code.find("std Y+") != std::string::npos);
+  assert(asm_code.find("sts __local_main_count") != std::string::npos);
+  assert(asm_code.find("lds r24, __local_main_count") != std::string::npos);
+  assert(asm_code.find(".section .bss") != std::string::npos);
+  assert(asm_code.find("__local_main_count:") != std::string::npos);
+  assert(asm_code.find(".zero 2") != std::string::npos);
   assert(asm_code.find("ret") != std::string::npos);
+  // In memory mode, frame pointer setup is omitted
+  assert(asm_code.find("push r28") == std::string::npos);
+
+  // Test AVR explicitly configured with stack frame storage
+  {
+    CodeGenOptions stack_opts;
+    stack_opts.local_var_storage = LocalVarStorage::Stack;
+    auto stack_gen = CodeGeneratorFactory::create(TargetArch::AVR, stack_opts);
+    assert(stack_gen->get_effective_local_var_storage() == LocalVarStorage::Stack);
+    std::string stack_asm = stack_gen->generate_to_string(*prog);
+    assert(stack_asm.find("push r28") != std::string::npos);
+    assert(stack_asm.find("push r29") != std::string::npos);
+    assert(stack_asm.find("std Y+") != std::string::npos);
+    assert(stack_asm.find("ldd r24, Y+") != std::string::npos);
+    assert(stack_asm.find("ret") != std::string::npos);
+  }
 
   // Test while and do-while loops
   {
@@ -282,13 +302,19 @@ static void test_avr_codegen() {
     assert(cg_asm.find("rjmp .Luser_target") != std::string::npos);
   }
 
-  // Test short modifier
+  // Test short modifier (memory vs stack)
   {
     auto type_prog = parse("short s = 10;\n"
                            "return s;\n");
     std::string type_asm = gen->generate_to_string(*type_prog);
-    assert(type_asm.find("std Y+") != std::string::npos);
-    assert(type_asm.find("ldd r24,") != std::string::npos);
+    assert(type_asm.find("sts __local_main_s") != std::string::npos);
+    assert(type_asm.find("lds r24, __local_main_s") != std::string::npos);
+
+    gen->set_local_var_storage(LocalVarStorage::Stack);
+    std::string stack_type_asm = gen->generate_to_string(*type_prog);
+    assert(stack_type_asm.find("std Y+") != std::string::npos);
+    assert(stack_type_asm.find("ldd r24,") != std::string::npos);
+    gen->set_local_var_storage(LocalVarStorage::Memory);
   }
 }
 
@@ -890,9 +916,15 @@ static void test_struct_codegen() {
     auto gen = CodeGeneratorFactory::create("avr");
     auto prog = parse(src);
     std::string asm_code = gen->generate_to_string(*prog);
-    assert(asm_code.find("ldd r24, Y+") != std::string::npos);
-    assert(asm_code.find("std Y+") != std::string::npos);
+    assert(asm_code.find("sts __local_main_p") != std::string::npos);
+    assert(asm_code.find("lds r24, __local_main_p") != std::string::npos);
     assert(asm_code.find("st Z, r24") != std::string::npos);
+
+    // Also test stack mode for structs
+    gen->set_local_var_storage(LocalVarStorage::Stack);
+    std::string stack_asm = gen->generate_to_string(*prog);
+    assert(stack_asm.find("ldd r24, Y+") != std::string::npos);
+    assert(stack_asm.find("std Y+") != std::string::npos);
   }
 
   // 4. C Transpiler
@@ -941,7 +973,13 @@ static void test_union_codegen() {
     auto gen = CodeGeneratorFactory::create("avr");
     auto prog = parse(src);
     std::string asm_code = gen->generate_to_string(*prog);
-    assert(asm_code.find("std Y+") != std::string::npos);
+    assert(asm_code.find("sts __local_main_d") != std::string::npos);
+    assert(asm_code.find("lds r24, __local_main_d") != std::string::npos);
+
+    // Also test stack mode for unions
+    gen->set_local_var_storage(LocalVarStorage::Stack);
+    std::string stack_asm = gen->generate_to_string(*prog);
+    assert(stack_asm.find("std Y+") != std::string::npos);
   }
 
   // 4. C Transpiler
@@ -1429,6 +1467,99 @@ static void test_calling_conventions_codegen() {
   }
 }
 
+static void test_local_var_storage_options() {
+  std::cout << "Testing Local Variable Storage Options (Memory vs Stack)...\n";
+
+  // 1. Check architecture defaults
+  {
+    auto avr = CodeGeneratorFactory::create("avr");
+    assert(avr->get_effective_local_var_storage() == LocalVarStorage::Memory);
+
+    auto x86 = CodeGeneratorFactory::create("x86_64");
+    assert(x86->get_effective_local_var_storage() == LocalVarStorage::Stack);
+
+    auto arm = CodeGeneratorFactory::create("arm64");
+    assert(arm->get_effective_local_var_storage() == LocalVarStorage::Stack);
+
+    auto c_gen = CodeGeneratorFactory::create("c");
+    assert(c_gen->get_effective_local_var_storage() == LocalVarStorage::Stack);
+  }
+
+  // 2. Check explicit options via CodeGenOptions
+  {
+    CodeGenOptions stack_opts;
+    stack_opts.local_var_storage = LocalVarStorage::Stack;
+    auto avr_stack = CodeGeneratorFactory::create("avr", stack_opts);
+    assert(avr_stack->get_effective_local_var_storage() == LocalVarStorage::Stack);
+
+    CodeGenOptions mem_opts;
+    mem_opts.local_var_storage = LocalVarStorage::Memory;
+    auto avr_mem = CodeGeneratorFactory::create("avr", mem_opts);
+    assert(avr_mem->get_effective_local_var_storage() == LocalVarStorage::Memory);
+  }
+
+  // 3. Test AVR code generation for functions and arrays in memory mode vs stack mode
+  {
+    const char *src =
+        "int compute(int a, int b) {\n"
+        "  int c = a + b;\n"
+        "  int arr[3] = {10, 20, 30};\n"
+        "  arr[0] = c;\n"
+        "  return arr[0];\n"
+        "}\n";
+    auto prog = parse(src);
+
+    // Memory mode (default)
+    auto mem_gen = CodeGeneratorFactory::create("avr");
+    std::string mem_asm = mem_gen->generate_to_string(*prog);
+
+    // No Y frame setup
+    assert(mem_asm.find("push r28") == std::string::npos);
+    assert(mem_asm.find("sbiw r28") == std::string::npos);
+    // Parameters stored directly to memory
+    assert(mem_asm.find("sts __local_compute_a, r24") != std::string::npos);
+    assert(mem_asm.find("sts __local_compute_b, r22") != std::string::npos);
+    // Local variable c stored to memory
+    assert(mem_asm.find("sts __local_compute_c, r24") != std::string::npos);
+    // Array access using direct symbol address
+    assert(mem_asm.find("ldi r30, lo8(__local_compute_arr)") != std::string::npos);
+    assert(mem_asm.find("ldi r31, hi8(__local_compute_arr)") != std::string::npos);
+    // Static memory section
+    assert(mem_asm.find(".section .bss") != std::string::npos);
+    assert(mem_asm.find("__local_compute_a:") != std::string::npos);
+    assert(mem_asm.find("__local_compute_b:") != std::string::npos);
+    assert(mem_asm.find("__local_compute_c:") != std::string::npos);
+    assert(mem_asm.find("__local_compute_arr:") != std::string::npos);
+    assert(mem_asm.find(".zero 6") != std::string::npos);
+
+    // Stack mode (explicit)
+    CodeGenOptions stack_opts;
+    stack_opts.local_var_storage = LocalVarStorage::Stack;
+    auto stack_gen = CodeGeneratorFactory::create("avr", stack_opts);
+    std::string stack_asm = stack_gen->generate_to_string(*prog);
+
+    assert(stack_asm.find("push r28") != std::string::npos);
+    assert(stack_asm.find("push r29") != std::string::npos);
+    assert(stack_asm.find("sbiw r28") != std::string::npos);
+    assert(stack_asm.find("std Y+") != std::string::npos);
+    assert(stack_asm.find("ldd r24, Y+") != std::string::npos);
+  }
+
+  // 4. Memory mode requested on x86_64 throws UnsupportedFeatureException
+  {
+    CodeGenOptions mem_opts;
+    mem_opts.local_var_storage = LocalVarStorage::Memory;
+    bool threw = false;
+    try {
+      CodeGeneratorFactory::create("x86_64", mem_opts);
+    } catch (const UnsupportedFeatureException &e) {
+      threw = true;
+      assert(e.get_arch() == "x86_64");
+    }
+    assert(threw);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Code Generator Test Suite\n";
@@ -1452,9 +1583,10 @@ int main() {
   test_inline_asm_codegen();
   test_linker_libraries();
   test_calling_conventions_codegen();
+  test_local_var_storage_options();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL CODEGEN TESTS PASSED! (18/18)\n";
+  std::cout << "  ALL CODEGEN TESTS PASSED! (19/19)\n";
   std::cout << "========================================\n";
   return 0;
 }

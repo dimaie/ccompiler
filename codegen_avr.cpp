@@ -24,6 +24,29 @@ int AVRCodeGenerator::get_var_offset(const std::string &name) {
   return current_offset_;
 }
 
+std::string AVRCodeGenerator::alloc_memory_var(const std::string &name, int size) {
+  auto it = var_symbols_.find(name);
+  if (it != var_symbols_.end()) {
+    return it->second;
+  }
+  std::string sym = "__local_" + current_func_name_ + "_" + name;
+  if (defined_symbols_.find(sym) != defined_symbols_.end()) {
+    sym += "_" + std::to_string(++var_sym_counter_);
+  }
+  defined_symbols_.insert(sym);
+  var_symbols_[name] = sym;
+  memory_vars_.push_back({sym, size});
+  return sym;
+}
+
+std::string AVRCodeGenerator::get_var_symbol(const std::string &name) {
+  auto it = var_symbols_.find(name);
+  if (it != var_symbols_.end()) {
+    return it->second;
+  }
+  return alloc_memory_var(name, 2);
+}
+
 int AVRCodeGenerator::get_type_size(DataType type, const std::string &st_name) const {
   if (type == DataType::Struct || type == DataType::Union) {
     auto it = struct_defs_.find(st_name);
@@ -106,6 +129,10 @@ static int compute_ast_frame_bytes(const ASTNode *node) {
 void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
   out_ = &out;
   var_offsets_.clear();
+  var_symbols_.clear();
+  memory_vars_.clear();
+  defined_symbols_.clear();
+  var_sym_counter_ = 0;
   is_array_.clear();
   array_sizes_.clear();
   is_func_ptr_.clear();
@@ -115,6 +142,7 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
   label_counter_ = 0;
   break_stack_.clear();
   continue_stack_.clear();
+  current_func_name_ = "main";
 
   for (const auto &stmt : program.statements) {
     if (stmt && stmt->getType() == ASTNodeType::StructDef) {
@@ -141,7 +169,11 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
 
   emit_raw("; ================================================================");
   emit_raw("; AVR Assembly generated for ATmega328P (Arduino UNO)");
-  emit_raw("; ABI: 16-bit ints, r24:r25 accumulator/return, Y (r28:r29) frame");
+  if (is_memory_mode()) {
+    emit_raw("; ABI: 16-bit ints, r24:r25 accumulator/return, static memory locals (.bss)");
+  } else {
+    emit_raw("; ABI: 16-bit ints, r24:r25 accumulator/return, Y (r28:r29) frame");
+  }
   emit_raw("; ================================================================");
   emit_raw(".arch atmega328p");
 
@@ -152,86 +184,109 @@ void AVRCodeGenerator::generate(const ProgramNode &program, std::ostream &out) {
     }
     int frame_size = (extra + 2 > 32) ? (extra + 2) : 32;
 
+    current_func_name_ = "main";
     ret_label_ = ".Lmain_avr_ret";
     emit_raw(".global main");
     emit_raw("main:");
 
-    // Prologue: Save Y frame pointer and set up stack frame
-    emit_line("push r28");
-    emit_line("push r29");
-    emit_line("in r28, 0x3d        ; SPL");
-    emit_line("in r29, 0x3e        ; SPH");
-    emit_line("sbiw r28, " + std::to_string(frame_size) + "        ; allocate local stack frame");
-    emit_line("in r0, 0x3f         ; SREG");
-    emit_line("cli");
-    emit_line("out 0x3e, r29       ; update SPH");
-    emit_line("out 0x3f, r0        ; restore SREG");
-    emit_line("out 0x3d, r28       ; update SPL");
+    if (!is_memory_mode()) {
+      // Prologue: Save Y frame pointer and set up stack frame
+      emit_line("push r28");
+      emit_line("push r29");
+      emit_line("in r28, 0x3d        ; SPL");
+      emit_line("in r29, 0x3e        ; SPH");
+      emit_line("sbiw r28, " + std::to_string(frame_size) + "        ; allocate local stack frame");
+      emit_line("in r0, 0x3f         ; SREG");
+      emit_line("cli");
+      emit_line("out 0x3e, r29       ; update SPH");
+      emit_line("out 0x3f, r0        ; restore SREG");
+      emit_line("out 0x3d, r28       ; update SPL");
+    }
 
     program.accept(*this);
 
     // Epilogue: Restore stack and frame pointer, then return
     emit_raw(ret_label_ + ":");
-    emit_line("adiw r28, " + std::to_string(frame_size) + "        ; free stack frame");
-    emit_line("in r0, 0x3f");
-    emit_line("cli");
-    emit_line("out 0x3e, r29");
-    emit_line("out 0x3f, r0");
-    emit_line("out 0x3d, r28");
-    emit_line("pop r29");
-    emit_line("pop r28");
+    if (!is_memory_mode()) {
+      emit_line("adiw r28, " + std::to_string(frame_size) + "        ; free stack frame");
+      emit_line("in r0, 0x3f");
+      emit_line("cli");
+      emit_line("out 0x3e, r29");
+      emit_line("out 0x3f, r0");
+      emit_line("out 0x3d, r28");
+      emit_line("pop r29");
+      emit_line("pop r28");
+    }
     emit_line("ret");
-    return;
+  } else {
+    for (const auto &stmt : program.statements) {
+      if (stmt && stmt->getType() == ASTNodeType::FuncDef) {
+        stmt->accept(*this);
+      }
+    }
+
+    if (!has_main_func && !non_func_stmts.empty()) {
+      var_offsets_.clear();
+      var_symbols_.clear();
+      is_array_.clear();
+      array_sizes_.clear();
+      is_func_ptr_.clear();
+      current_offset_ = 0;
+      current_func_name_ = "main";
+
+      int extra = 0;
+      for (const auto *stmt : non_func_stmts) {
+        extra += compute_ast_frame_bytes(stmt);
+      }
+      int frame_size = (extra + 2 > 32) ? (extra + 2) : 32;
+
+      ret_label_ = ".Lmain_avr_ret";
+      emit_raw(".global main");
+      emit_raw("main:");
+
+      if (!is_memory_mode()) {
+        emit_line("push r28");
+        emit_line("push r29");
+        emit_line("in r28, 0x3d        ; SPL");
+        emit_line("in r29, 0x3e        ; SPH");
+        emit_line("sbiw r28, " + std::to_string(frame_size) + "        ; allocate local stack frame");
+        emit_line("in r0, 0x3f         ; SREG");
+        emit_line("cli");
+        emit_line("out 0x3e, r29       ; update SPH");
+        emit_line("out 0x3f, r0        ; restore SREG");
+        emit_line("out 0x3d, r28       ; update SPL");
+      }
+
+      for (const auto *stmt : non_func_stmts) {
+        stmt->accept(*this);
+      }
+
+      emit_raw(ret_label_ + ":");
+      if (!is_memory_mode()) {
+        emit_line("adiw r28, " + std::to_string(frame_size) + "        ; free stack frame");
+        emit_line("in r0, 0x3f");
+        emit_line("cli");
+        emit_line("out 0x3e, r29");
+        emit_line("out 0x3f, r0");
+        emit_line("out 0x3d, r28");
+        emit_line("pop r29");
+        emit_line("pop r28");
+      }
+      emit_line("ret");
+    }
   }
 
-  for (const auto &stmt : program.statements) {
-    if (stmt && stmt->getType() == ASTNodeType::FuncDef) {
-      stmt->accept(*this);
+  if (is_memory_mode() && !memory_vars_.empty()) {
+    emit_raw("");
+    emit_raw("; ================================================================");
+    emit_raw("; Static memory allocation for local variables (.bss)");
+    emit_raw("; ================================================================");
+    emit_raw(".section .bss");
+    for (const auto &mv : memory_vars_) {
+      emit_raw(".global " + mv.symbol);
+      emit_raw(mv.symbol + ":");
+      emit_line(".zero " + std::to_string(mv.size));
     }
-  }
-
-  if (!has_main_func && !non_func_stmts.empty()) {
-    var_offsets_.clear();
-    is_array_.clear();
-    array_sizes_.clear();
-    is_func_ptr_.clear();
-    current_offset_ = 0;
-
-    int extra = 0;
-    for (const auto *stmt : non_func_stmts) {
-      extra += compute_ast_frame_bytes(stmt);
-    }
-    int frame_size = (extra + 2 > 32) ? (extra + 2) : 32;
-
-    ret_label_ = ".Lmain_avr_ret";
-    emit_raw(".global main");
-    emit_raw("main:");
-
-    emit_line("push r28");
-    emit_line("push r29");
-    emit_line("in r28, 0x3d        ; SPL");
-    emit_line("in r29, 0x3e        ; SPH");
-    emit_line("sbiw r28, " + std::to_string(frame_size) + "        ; allocate local stack frame");
-    emit_line("in r0, 0x3f         ; SREG");
-    emit_line("cli");
-    emit_line("out 0x3e, r29       ; update SPH");
-    emit_line("out 0x3f, r0        ; restore SREG");
-    emit_line("out 0x3d, r28       ; update SPL");
-
-    for (const auto *stmt : non_func_stmts) {
-      stmt->accept(*this);
-    }
-
-    emit_raw(ret_label_ + ":");
-    emit_line("adiw r28, " + std::to_string(frame_size) + "        ; free stack frame");
-    emit_line("in r0, 0x3f");
-    emit_line("cli");
-    emit_line("out 0x3e, r29");
-    emit_line("out 0x3f, r0");
-    emit_line("out 0x3d, r28");
-    emit_line("pop r29");
-    emit_line("pop r28");
-    emit_line("ret");
   }
 }
 
@@ -239,7 +294,9 @@ void AVRCodeGenerator::visit(const FuncDefNode &node) {
   if (!node.body) {
     return;
   }
+  current_func_name_ = node.name;
   var_offsets_.clear();
+  var_symbols_.clear();
   is_array_.clear();
   array_sizes_.clear();
   is_func_ptr_.clear();
@@ -257,17 +314,19 @@ void AVRCodeGenerator::visit(const FuncDefNode &node) {
   emit_raw(".global " + node.name);
   emit_raw(node.name + ":");
 
-  // Prologue: Save Y frame pointer and set up stack frame
-  emit_line("push r28");
-  emit_line("push r29");
-  emit_line("in r28, 0x3d        ; SPL");
-  emit_line("in r29, 0x3e        ; SPH");
-  emit_line("sbiw r28, " + std::to_string(frame_size) + "        ; allocate local stack frame");
-  emit_line("in r0, 0x3f         ; SREG");
-  emit_line("cli");
-  emit_line("out 0x3e, r29       ; update SPH");
-  emit_line("out 0x3f, r0        ; restore SREG");
-  emit_line("out 0x3d, r28       ; update SPL");
+  if (!is_memory_mode()) {
+    // Prologue: Save Y frame pointer and set up stack frame
+    emit_line("push r28");
+    emit_line("push r29");
+    emit_line("in r28, 0x3d        ; SPL");
+    emit_line("in r29, 0x3e        ; SPH");
+    emit_line("sbiw r28, " + std::to_string(frame_size) + "        ; allocate local stack frame");
+    emit_line("in r0, 0x3f         ; SREG");
+    emit_line("cli");
+    emit_line("out 0x3e, r29       ; update SPH");
+    emit_line("out 0x3f, r0        ; restore SREG");
+    emit_line("out 0x3d, r28       ; update SPL");
+  }
 
   static const std::pair<const char *, const char *> ARG_REGS[] = {
       {"r24", "r25"}, {"r22", "r23"}, {"r20", "r21"}, {"r18", "r19"}};
@@ -281,10 +340,16 @@ void AVRCodeGenerator::visit(const FuncDefNode &node) {
       if (p.is_func_ptr) {
         is_func_ptr_[p.name] = true;
       }
-      int offset = get_var_offset(p.name);
-      emit_line("std Y+" + std::to_string(offset - 1) + ", " + ARG_REGS[i].first);
-      emit_line("std Y+" + std::to_string(offset) + ", " +
-                ARG_REGS[i].second);
+      if (is_memory_mode()) {
+        std::string sym = alloc_memory_var(p.name, 2);
+        emit_line("sts " + sym + ", " + ARG_REGS[i].first);
+        emit_line("sts " + sym + " + 1, " + ARG_REGS[i].second);
+      } else {
+        int offset = get_var_offset(p.name);
+        emit_line("std Y+" + std::to_string(offset - 1) + ", " + ARG_REGS[i].first);
+        emit_line("std Y+" + std::to_string(offset) + ", " +
+                  ARG_REGS[i].second);
+      }
     } else {
       unsupported(node, "more than 4 function parameters on AVR");
     }
@@ -296,14 +361,16 @@ void AVRCodeGenerator::visit(const FuncDefNode &node) {
 
   // Epilogue: Restore stack and frame pointer, then return
   emit_raw(ret_label_ + ":");
-  emit_line("adiw r28, " + std::to_string(frame_size) + "        ; free stack frame");
-  emit_line("in r0, 0x3f");
-  emit_line("cli");
-  emit_line("out 0x3e, r29");
-  emit_line("out 0x3f, r0");
-  emit_line("out 0x3d, r28");
-  emit_line("pop r29");
-  emit_line("pop r28");
+  if (!is_memory_mode()) {
+    emit_line("adiw r28, " + std::to_string(frame_size) + "        ; free stack frame");
+    emit_line("in r0, 0x3f");
+    emit_line("cli");
+    emit_line("out 0x3e, r29");
+    emit_line("out 0x3f, r0");
+    emit_line("out 0x3d, r28");
+    emit_line("pop r29");
+    emit_line("pop r28");
+  }
   emit_line("ret");
 
   ret_label_ = prev_ret_label;
@@ -320,11 +387,19 @@ void AVRCodeGenerator::visit(const CallNode &node) {
     node.callee_expr->accept(*this);
     emit_line("push r24");
     emit_line("push r25");
-  } else if (!node.callee.empty() && var_offsets_.find(node.callee) != var_offsets_.end()) {
+  } else if (!node.callee.empty() &&
+             ((is_memory_mode() && var_symbols_.find(node.callee) != var_symbols_.end()) ||
+              (!is_memory_mode() && var_offsets_.find(node.callee) != var_offsets_.end()))) {
     is_indirect = true;
-    int offset = get_var_offset(node.callee);
-    emit_line("ldd r24, Y+" + std::to_string(offset - 1));
-    emit_line("ldd r25, Y+" + std::to_string(offset));
+    if (is_memory_mode()) {
+      std::string sym = get_var_symbol(node.callee);
+      emit_line("lds r24, " + sym);
+      emit_line("lds r25, " + sym + " + 1");
+    } else {
+      int offset = get_var_offset(node.callee);
+      emit_line("ldd r24, Y+" + std::to_string(offset - 1));
+      emit_line("ldd r25, Y+" + std::to_string(offset));
+    }
     emit_line("push r24");
     emit_line("push r25");
   }
@@ -384,11 +459,20 @@ void AVRCodeGenerator::visit(const VarDeclNode &node) {
     var_struct_name_[node.name] = node.struct_name;
   }
   if (node.pointer_level > 0 || (node.data_type != DataType::Struct && node.data_type != DataType::Union && !node.is_array)) {
-    int offset = get_var_offset(node.name);
-    if (node.init) {
-      node.init->accept(*this);
-      emit_line("std Y+" + std::to_string(offset - 1) + ", r24");
-      emit_line("std Y+" + std::to_string(offset) + ", r25");
+    if (is_memory_mode()) {
+      std::string sym = alloc_memory_var(node.name, 2);
+      if (node.init) {
+        node.init->accept(*this);
+        emit_line("sts " + sym + ", r24");
+        emit_line("sts " + sym + " + 1, r25");
+      }
+    } else {
+      int offset = get_var_offset(node.name);
+      if (node.init) {
+        node.init->accept(*this);
+        emit_line("std Y+" + std::to_string(offset - 1) + ", r24");
+        emit_line("std Y+" + std::to_string(offset) + ", r25");
+      }
     }
     return;
   }
@@ -399,42 +483,90 @@ void AVRCodeGenerator::visit(const VarDeclNode &node) {
     if (node.data_type == DataType::Struct || node.data_type == DataType::Union) {
       elem_size = get_type_size(node.data_type, node.struct_name);
     }
-    int base_offset = current_offset_ + 1;
-    current_offset_ += node.array_size * elem_size;
-    var_offsets_[node.name] = base_offset;
+    int total_bytes = node.array_size * elem_size;
+    if (is_memory_mode()) {
+      std::string sym = alloc_memory_var(node.name, total_bytes);
+      if (node.init) {
+        const auto *init_list = static_cast<const InitListNode *>(node.init.get());
+        for (size_t i = 0; i < init_list->elements.size(); ++i) {
+          if (init_list->elements[i]) {
+            init_list->elements[i]->accept(*this);
+            int elem_byte_offset = static_cast<int>(i) * elem_size;
+            if (elem_byte_offset == 0) {
+              emit_line("sts " + sym + ", r24");
+              emit_line("sts " + sym + " + 1, r25");
+            } else {
+              emit_line("sts " + sym + " + " + std::to_string(elem_byte_offset) + ", r24");
+              emit_line("sts " + sym + " + " + std::to_string(elem_byte_offset + 1) + ", r25");
+            }
+          }
+        }
+      }
+    } else {
+      int base_offset = current_offset_ + 1;
+      current_offset_ += total_bytes;
+      var_offsets_[node.name] = base_offset;
 
-    if (node.init) {
-      const auto *init_list = static_cast<const InitListNode *>(node.init.get());
-      for (size_t i = 0; i < init_list->elements.size(); ++i) {
-        if (init_list->elements[i]) {
-          init_list->elements[i]->accept(*this);
-          int elem_offset = base_offset + static_cast<int>(i) * elem_size;
-          emit_line("std Y+" + std::to_string(elem_offset) + ", r24");
-          emit_line("std Y+" + std::to_string(elem_offset + 1) + ", r25");
+      if (node.init) {
+        const auto *init_list = static_cast<const InitListNode *>(node.init.get());
+        for (size_t i = 0; i < init_list->elements.size(); ++i) {
+          if (init_list->elements[i]) {
+            init_list->elements[i]->accept(*this);
+            int elem_offset = base_offset + static_cast<int>(i) * elem_size;
+            emit_line("std Y+" + std::to_string(elem_offset) + ", r24");
+            emit_line("std Y+" + std::to_string(elem_offset + 1) + ", r25");
+          }
         }
       }
     }
   } else {
     int st_size = get_type_size(node.data_type, node.struct_name);
-    int base_offset = current_offset_ + 1;
-    current_offset_ += st_size;
-    var_offsets_[node.name] = base_offset;
-    if (node.init) {
-      if (node.init->getType() == ASTNodeType::InitList) {
-        const auto *init_list = static_cast<const InitListNode *>(node.init.get());
-        const auto &st_info = struct_defs_[node.struct_name];
-        for (size_t i = 0; i < init_list->elements.size() && i < st_info.members.size(); ++i) {
-          if (init_list->elements[i]) {
-            init_list->elements[i]->accept(*this);
-            int elem_offset = base_offset + st_info.members[i].offset;
-            emit_line("std Y+" + std::to_string(elem_offset) + ", r24");
-            emit_line("std Y+" + std::to_string(elem_offset + 1) + ", r25");
+    if (is_memory_mode()) {
+      std::string sym = alloc_memory_var(node.name, st_size);
+      if (node.init) {
+        if (node.init->getType() == ASTNodeType::InitList) {
+          const auto *init_list = static_cast<const InitListNode *>(node.init.get());
+          const auto &st_info = struct_defs_[node.struct_name];
+          for (size_t i = 0; i < init_list->elements.size() && i < st_info.members.size(); ++i) {
+            if (init_list->elements[i]) {
+              init_list->elements[i]->accept(*this);
+              int mem_offset = st_info.members[i].offset;
+              if (mem_offset == 0) {
+                emit_line("sts " + sym + ", r24");
+                emit_line("sts " + sym + " + 1, r25");
+              } else {
+                emit_line("sts " + sym + " + " + std::to_string(mem_offset) + ", r24");
+                emit_line("sts " + sym + " + " + std::to_string(mem_offset + 1) + ", r25");
+              }
+            }
           }
+        } else {
+          node.init->accept(*this);
+          emit_line("sts " + sym + ", r24");
+          emit_line("sts " + sym + " + 1, r25");
         }
-      } else {
-        node.init->accept(*this);
-        emit_line("std Y+" + std::to_string(base_offset) + ", r24");
-        emit_line("std Y+" + std::to_string(base_offset + 1) + ", r25");
+      }
+    } else {
+      int base_offset = current_offset_ + 1;
+      current_offset_ += st_size;
+      var_offsets_[node.name] = base_offset;
+      if (node.init) {
+        if (node.init->getType() == ASTNodeType::InitList) {
+          const auto *init_list = static_cast<const InitListNode *>(node.init.get());
+          const auto &st_info = struct_defs_[node.struct_name];
+          for (size_t i = 0; i < init_list->elements.size() && i < st_info.members.size(); ++i) {
+            if (init_list->elements[i]) {
+              init_list->elements[i]->accept(*this);
+              int elem_offset = base_offset + st_info.members[i].offset;
+              emit_line("std Y+" + std::to_string(elem_offset) + ", r24");
+              emit_line("std Y+" + std::to_string(elem_offset + 1) + ", r25");
+            }
+          }
+        } else {
+          node.init->accept(*this);
+          emit_line("std Y+" + std::to_string(base_offset) + ", r24");
+          emit_line("std Y+" + std::to_string(base_offset + 1) + ", r25");
+        }
       }
     }
   }
@@ -445,7 +577,6 @@ void AVRCodeGenerator::visit(const ArrayAccessNode &node) {
     unsupported(node, "complex array access");
   }
   auto *ident = static_cast<const IdentifierNode *>(node.array.get());
-  int base_offset = get_var_offset(ident->name);
 
   if (node.index) {
     node.index->accept(*this);
@@ -456,11 +587,21 @@ void AVRCodeGenerator::visit(const ArrayAccessNode &node) {
 
   emit_line("lsl r24");
   emit_line("rol r25");
-  emit_line("subi r24, lo8(-" + std::to_string(base_offset) + ")");
-  emit_line("sbci r25, hi8(-" + std::to_string(base_offset) + ")");
-  emit_line("movw r30, r28");
-  emit_line("add r30, r24");
-  emit_line("adc r31, r25");
+
+  if (is_memory_mode()) {
+    std::string sym = get_var_symbol(ident->name);
+    emit_line("ldi r30, lo8(" + sym + ")");
+    emit_line("ldi r31, hi8(" + sym + ")");
+    emit_line("add r30, r24");
+    emit_line("adc r31, r25");
+  } else {
+    int base_offset = get_var_offset(ident->name);
+    emit_line("subi r24, lo8(-" + std::to_string(base_offset) + ")");
+    emit_line("sbci r25, hi8(-" + std::to_string(base_offset) + ")");
+    emit_line("movw r30, r28");
+    emit_line("add r30, r24");
+    emit_line("adc r31, r25");
+  }
   emit_line("ld r24, Z");
   emit_line("ldd r25, Z+1");
 }
@@ -484,7 +625,6 @@ void AVRCodeGenerator::visit(const AssignNode &node) {
       unsupported(node, "complex array assignment");
     }
     auto *ident = static_cast<const IdentifierNode *>(acc->array.get());
-    int base_offset = get_var_offset(ident->name);
 
     if (acc->index) {
       acc->index->accept(*this);
@@ -503,11 +643,20 @@ void AVRCodeGenerator::visit(const AssignNode &node) {
     emit_line("pop r18");
     emit_line("lsl r18");
     emit_line("rol r19");
-    emit_line("subi r18, lo8(-" + std::to_string(base_offset) + ")");
-    emit_line("sbci r19, hi8(-" + std::to_string(base_offset) + ")");
-    emit_line("movw r30, r28");
-    emit_line("add r30, r18");
-    emit_line("adc r31, r19");
+    if (is_memory_mode()) {
+      std::string sym = get_var_symbol(ident->name);
+      emit_line("ldi r30, lo8(" + sym + ")");
+      emit_line("ldi r31, hi8(" + sym + ")");
+      emit_line("add r30, r18");
+      emit_line("adc r31, r19");
+    } else {
+      int base_offset = get_var_offset(ident->name);
+      emit_line("subi r18, lo8(-" + std::to_string(base_offset) + ")");
+      emit_line("sbci r19, hi8(-" + std::to_string(base_offset) + ")");
+      emit_line("movw r30, r28");
+      emit_line("add r30, r18");
+      emit_line("adc r31, r19");
+    }
     emit_line("st Z, r24");
     emit_line("std Z+1, r25");
     return;
@@ -568,13 +717,25 @@ void AVRCodeGenerator::visit(const AssignNode &node) {
     } else {
       if (mem->object->getType() == ASTNodeType::Identifier) {
         auto *ident = static_cast<const IdentifierNode *>(mem->object.get());
-        int base_offset = get_var_offset(ident->name);
-        int mem_off = base_offset + m.offset;
         if (node.right) {
           node.right->accept(*this);
         }
-        emit_line("std Y+" + std::to_string(mem_off) + ", r24");
-        emit_line("std Y+" + std::to_string(mem_off + 1) + ", r25");
+        if (is_memory_mode()) {
+          std::string sym = get_var_symbol(ident->name);
+          int mem_off = m.offset;
+          if (mem_off == 0) {
+            emit_line("sts " + sym + ", r24");
+            emit_line("sts " + sym + " + 1, r25");
+          } else {
+            emit_line("sts " + sym + " + " + std::to_string(mem_off) + ", r24");
+            emit_line("sts " + sym + " + " + std::to_string(mem_off + 1) + ", r25");
+          }
+        } else {
+          int base_offset = get_var_offset(ident->name);
+          int mem_off = base_offset + m.offset;
+          emit_line("std Y+" + std::to_string(mem_off) + ", r24");
+          emit_line("std Y+" + std::to_string(mem_off + 1) + ", r25");
+        }
         return;
       }
       unsupported(node, "complex member assignment");
@@ -585,13 +746,19 @@ void AVRCodeGenerator::visit(const AssignNode &node) {
     throw std::runtime_error("Left-hand side of assignment must be variable, array element, or dereference");
   }
   auto *ident = static_cast<const IdentifierNode *>(node.left.get());
-  int offset = get_var_offset(ident->name);
 
   if (node.right) {
     node.right->accept(*this);
   }
-  emit_line("std Y+" + std::to_string(offset - 1) + ", r24");
-  emit_line("std Y+" + std::to_string(offset) + ", r25");
+  if (is_memory_mode()) {
+    std::string sym = get_var_symbol(ident->name);
+    emit_line("sts " + sym + ", r24");
+    emit_line("sts " + sym + " + 1, r25");
+  } else {
+    int offset = get_var_offset(ident->name);
+    emit_line("std Y+" + std::to_string(offset - 1) + ", r24");
+    emit_line("std Y+" + std::to_string(offset) + ", r25");
+  }
 }
 
 void AVRCodeGenerator::visit(const IntLitNode &node) {
@@ -603,23 +770,42 @@ void AVRCodeGenerator::visit(const IntLitNode &node) {
 }
 
 void AVRCodeGenerator::visit(const IdentifierNode &node) {
-  auto it_offset = var_offsets_.find(node.name);
-  if (it_offset == var_offsets_.end()) {
-    // Function address decay
-    emit_line("ldi r24, pm_lo8(" + node.name + ")");
-    emit_line("ldi r25, pm_hi8(" + node.name + ")");
-    return;
+  if (is_memory_mode()) {
+    auto it_sym = var_symbols_.find(node.name);
+    if (it_sym == var_symbols_.end()) {
+      // Function address decay
+      emit_line("ldi r24, pm_lo8(" + node.name + ")");
+      emit_line("ldi r25, pm_hi8(" + node.name + ")");
+      return;
+    }
+    std::string sym = it_sym->second;
+    auto it = is_array_.find(node.name);
+    if (it != is_array_.end() && it->second) {
+      emit_line("ldi r24, lo8(" + sym + ")");
+      emit_line("ldi r25, hi8(" + sym + ")");
+      return;
+    }
+    emit_line("lds r24, " + sym);
+    emit_line("lds r25, " + sym + " + 1");
+  } else {
+    auto it_offset = var_offsets_.find(node.name);
+    if (it_offset == var_offsets_.end()) {
+      // Function address decay
+      emit_line("ldi r24, pm_lo8(" + node.name + ")");
+      emit_line("ldi r25, pm_hi8(" + node.name + ")");
+      return;
+    }
+    int offset = it_offset->second;
+    auto it = is_array_.find(node.name);
+    if (it != is_array_.end() && it->second) {
+      emit_line("movw r24, r28");
+      emit_line("subi r24, lo8(-" + std::to_string(offset) + ")");
+      emit_line("sbci r25, hi8(-" + std::to_string(offset) + ")");
+      return;
+    }
+    emit_line("ldd r24, Y+" + std::to_string(offset - 1));
+    emit_line("ldd r25, Y+" + std::to_string(offset));
   }
-  int offset = it_offset->second;
-  auto it = is_array_.find(node.name);
-  if (it != is_array_.end() && it->second) {
-    emit_line("movw r24, r28");
-    emit_line("subi r24, lo8(-" + std::to_string(offset) + ")");
-    emit_line("sbci r25, hi8(-" + std::to_string(offset) + ")");
-    return;
-  }
-  emit_line("ldd r24, Y+" + std::to_string(offset - 1));
-  emit_line("ldd r25, Y+" + std::to_string(offset));
 }
 
 void AVRCodeGenerator::visit(const UnaryOpNode &node) {
@@ -629,15 +815,27 @@ void AVRCodeGenerator::visit(const UnaryOpNode &node) {
     }
     if (node.expr->getType() == ASTNodeType::Identifier) {
       auto *ident = static_cast<const IdentifierNode *>(node.expr.get());
-      auto it = var_offsets_.find(ident->name);
-      if (it != var_offsets_.end()) {
-        int offset = it->second;
-        emit_line("movw r24, r28");
-        emit_line("subi r24, lo8(-" + std::to_string(offset) + ")");
-        emit_line("sbci r25, hi8(-" + std::to_string(offset) + ")");
+      if (is_memory_mode()) {
+        auto it = var_symbols_.find(ident->name);
+        if (it != var_symbols_.end()) {
+          std::string sym = it->second;
+          emit_line("ldi r24, lo8(" + sym + ")");
+          emit_line("ldi r25, hi8(" + sym + ")");
+        } else {
+          emit_line("ldi r24, pm_lo8(" + ident->name + ")");
+          emit_line("ldi r25, pm_hi8(" + ident->name + ")");
+        }
       } else {
-        emit_line("ldi r24, pm_lo8(" + ident->name + ")");
-        emit_line("ldi r25, pm_hi8(" + ident->name + ")");
+        auto it = var_offsets_.find(ident->name);
+        if (it != var_offsets_.end()) {
+          int offset = it->second;
+          emit_line("movw r24, r28");
+          emit_line("subi r24, lo8(-" + std::to_string(offset) + ")");
+          emit_line("sbci r25, hi8(-" + std::to_string(offset) + ")");
+        } else {
+          emit_line("ldi r24, pm_lo8(" + ident->name + ")");
+          emit_line("ldi r25, pm_hi8(" + ident->name + ")");
+        }
       }
       return;
     }
@@ -647,7 +845,6 @@ void AVRCodeGenerator::visit(const UnaryOpNode &node) {
         unsupported(node, "complex array address");
       }
       auto *ident = static_cast<const IdentifierNode *>(acc->array.get());
-      int base_offset = get_var_offset(ident->name);
       if (acc->index) {
         acc->index->accept(*this);
       } else {
@@ -656,11 +853,20 @@ void AVRCodeGenerator::visit(const UnaryOpNode &node) {
       }
       emit_line("lsl r24");
       emit_line("rol r25");
-      emit_line("subi r24, lo8(-" + std::to_string(base_offset) + ")");
-      emit_line("sbci r25, hi8(-" + std::to_string(base_offset) + ")");
-      emit_line("movw r30, r28");
-      emit_line("add r30, r24");
-      emit_line("adc r31, r25");
+      if (is_memory_mode()) {
+        std::string sym = get_var_symbol(ident->name);
+        emit_line("ldi r30, lo8(" + sym + ")");
+        emit_line("ldi r31, hi8(" + sym + ")");
+        emit_line("add r30, r24");
+        emit_line("adc r31, r25");
+      } else {
+        int base_offset = get_var_offset(ident->name);
+        emit_line("subi r24, lo8(-" + std::to_string(base_offset) + ")");
+        emit_line("sbci r25, hi8(-" + std::to_string(base_offset) + ")");
+        emit_line("movw r30, r28");
+        emit_line("add r30, r24");
+        emit_line("adc r31, r25");
+      }
       emit_line("movw r24, r30");
       return;
     }
@@ -683,11 +889,23 @@ void AVRCodeGenerator::visit(const UnaryOpNode &node) {
       } else {
         if (mem->object->getType() == ASTNodeType::Identifier) {
           auto *ident = static_cast<const IdentifierNode *>(mem->object.get());
-          int base_offset = get_var_offset(ident->name);
-          int mem_off = base_offset + m.offset;
-          emit_line("movw r24, r28");
-          emit_line("subi r24, lo8(-" + std::to_string(mem_off) + ")");
-          emit_line("sbci r25, hi8(-" + std::to_string(mem_off) + ")");
+          if (is_memory_mode()) {
+            std::string sym = get_var_symbol(ident->name);
+            int mem_off = m.offset;
+            if (mem_off == 0) {
+              emit_line("ldi r24, lo8(" + sym + ")");
+              emit_line("ldi r25, hi8(" + sym + ")");
+            } else {
+              emit_line("ldi r24, lo8(" + sym + " + " + std::to_string(mem_off) + ")");
+              emit_line("ldi r25, hi8(" + sym + " + " + std::to_string(mem_off) + ")");
+            }
+          } else {
+            int base_offset = get_var_offset(ident->name);
+            int mem_off = base_offset + m.offset;
+            emit_line("movw r24, r28");
+            emit_line("subi r24, lo8(-" + std::to_string(mem_off) + ")");
+            emit_line("sbci r25, hi8(-" + std::to_string(mem_off) + ")");
+          }
           return;
         }
       }
@@ -1125,10 +1343,22 @@ void AVRCodeGenerator::visit(const MemberAccessNode &node) {
   } else {
     if (node.object->getType() == ASTNodeType::Identifier) {
       auto *ident = static_cast<const IdentifierNode *>(node.object.get());
-      int base_offset = get_var_offset(ident->name);
-      int mem_off = base_offset + m.offset;
-      emit_line("ldd r24, Y+" + std::to_string(mem_off));
-      emit_line("ldd r25, Y+" + std::to_string(mem_off + 1));
+      if (is_memory_mode()) {
+        std::string sym = get_var_symbol(ident->name);
+        int mem_off = m.offset;
+        if (mem_off == 0) {
+          emit_line("lds r24, " + sym);
+          emit_line("lds r25, " + sym + " + 1");
+        } else {
+          emit_line("lds r24, " + sym + " + " + std::to_string(mem_off));
+          emit_line("lds r25, " + sym + " + " + std::to_string(mem_off + 1));
+        }
+      } else {
+        int base_offset = get_var_offset(ident->name);
+        int mem_off = base_offset + m.offset;
+        emit_line("ldd r24, Y+" + std::to_string(mem_off));
+        emit_line("ldd r25, Y+" + std::to_string(mem_off + 1));
+      }
     } else {
       unsupported(node, "complex member access");
     }

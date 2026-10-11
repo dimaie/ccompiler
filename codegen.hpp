@@ -15,6 +15,16 @@ enum class TargetArch {
   C_Transpiler
 };
 
+enum class LocalVarStorage {
+  Auto,     // Architecture default: Memory for AVR, Stack for x86_64/arm64/c
+  Stack,    // Stack frame allocation (re-entrant)
+  Memory    // Static memory / SRAM allocation (fast, small code size, non-reentrant)
+};
+
+struct CodeGenOptions {
+  LocalVarStorage local_var_storage{LocalVarStorage::Auto};
+};
+
 /**
  * @brief Exception thrown when a code generator encounters an AST feature or
  *        construct not supported on that target architecture.
@@ -48,12 +58,26 @@ private:
 };
 
 class ICodeGenerator : public ASTVisitor {
+protected:
+  CodeGenOptions options_;
+
 public:
   virtual ~ICodeGenerator() = default;
 
   virtual TargetArch get_arch() const = 0;
   virtual const char *get_arch_name() const = 0;
   virtual void generate(const ProgramNode &program, std::ostream &out) = 0;
+
+  virtual void set_options(const CodeGenOptions &options) { options_ = options; }
+  virtual const CodeGenOptions &get_options() const { return options_; }
+  virtual void set_local_var_storage(LocalVarStorage storage) { options_.local_var_storage = storage; }
+  virtual LocalVarStorage get_local_var_storage() const { return options_.local_var_storage; }
+  virtual LocalVarStorage get_effective_local_var_storage() const {
+    if (options_.local_var_storage == LocalVarStorage::Auto) {
+      return (get_arch() == TargetArch::AVR) ? LocalVarStorage::Memory : LocalVarStorage::Stack;
+    }
+    return options_.local_var_storage;
+  }
 
   virtual std::string generate_to_string(const ProgramNode &program) {
     std::ostringstream ss;
@@ -106,8 +130,8 @@ public:
 
 class CodeGeneratorFactory {
 public:
-  static std::unique_ptr<ICodeGenerator> create(TargetArch arch);
-  static std::unique_ptr<ICodeGenerator> create(const std::string &arch_name);
+  static std::unique_ptr<ICodeGenerator> create(TargetArch arch, const CodeGenOptions &options = {});
+  static std::unique_ptr<ICodeGenerator> create(const std::string &arch_name, const CodeGenOptions &options = {});
 };
 
 #endif // CODEGEN_HPP
