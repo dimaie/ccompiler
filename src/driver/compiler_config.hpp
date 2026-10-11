@@ -20,6 +20,7 @@ struct GeneralConfig {
   std::string input_filename;
   std::string output_filename;
   std::string target{"x86_64"};
+  TargetSpec target_spec;
   StopPhase stop_phase{StopPhase::FullBuild};
   TargetFileType target_file_type{TargetFileType::Auto};
   bool show_ast{false};

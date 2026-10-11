@@ -199,47 +199,57 @@ AssemblerLinkerResult AVRAssemblerLinker::assemble_and_link(
 }
 
 std::unique_ptr<IAssemblerLinker>
+AssemblerLinkerFactory::create(const TargetSpec &spec) {
+  if (spec.arch == TargetArch::X86_64) {
+    if (spec.os == TargetOS::Linux) {
+      return std::make_unique<LinuxAssemblerLinker>();
+    }
+    return std::make_unique<X86_64AssemblerLinker>();
+  }
+  if (spec.arch == TargetArch::ARM64) {
+    return std::make_unique<StubAssemblerLinker>(TargetArch::ARM64, "arm64");
+  }
+  if (spec.arch == TargetArch::AVR) {
+    return std::make_unique<AVRAssemblerLinker>();
+  }
+  if (spec.arch == TargetArch::C_Transpiler) {
+    return std::make_unique<StubAssemblerLinker>(TargetArch::C_Transpiler, "c");
+  }
+
+  return std::make_unique<StubAssemblerLinker>(spec.arch, spec.to_string());
+}
+
+std::unique_ptr<IAssemblerLinker>
 AssemblerLinkerFactory::create(TargetArch arch) {
+  TargetSpec spec;
+  spec.arch = arch;
   switch (arch) {
   case TargetArch::X86_64:
 #ifdef _WIN32
-    return std::make_unique<X86_64AssemblerLinker>();
+    spec.os = TargetOS::Windows;
 #else
-    return std::make_unique<LinuxAssemblerLinker>();
+    spec.os = TargetOS::Linux;
 #endif
-  case TargetArch::ARM64:
-    return std::make_unique<StubAssemblerLinker>(TargetArch::ARM64, "arm64");
+    break;
   case TargetArch::AVR:
-    return std::make_unique<AVRAssemblerLinker>();
+    spec.os = TargetOS::BareMetal;
+    break;
+  case TargetArch::ARM64:
+    spec.os = TargetOS::Linux;
+    break;
   case TargetArch::C_Transpiler:
-    return std::make_unique<StubAssemblerLinker>(TargetArch::C_Transpiler, "c");
-  default:
-    return std::make_unique<StubAssemblerLinker>(arch, "unknown");
+    spec.os = TargetOS::None;
+    break;
   }
+  return create(spec);
 }
 
 std::unique_ptr<IAssemblerLinker>
 AssemblerLinkerFactory::create(const std::string &arch_name) {
-  std::string lower = arch_name;
-  std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-
-  if (lower == "linux" || lower == "x86_64-linux" || lower == "elf64" || lower == "elf") {
-    return std::make_unique<LinuxAssemblerLinker>();
+  try {
+    TargetSpec spec = TargetSpec::parse(arch_name);
+    return create(spec);
+  } catch (...) {
+    return std::make_unique<StubAssemblerLinker>(TargetArch::X86_64, arch_name);
   }
-  if (lower == "x86_64" || lower == "x86" || lower == "x64" ||
-      lower == "amd64") {
-    return create(TargetArch::X86_64);
-  }
-  if (lower == "arm" || lower == "arm64" || lower == "aarch64" ||
-      lower == "rpi" || lower == "raspberrypi") {
-    return create(TargetArch::ARM64);
-  }
-  if (lower == "avr" || lower == "arduino" || lower == "atmega328p") {
-    return create(TargetArch::AVR);
-  }
-  if (lower == "c" || lower == "c_transpiler") {
-    return create(TargetArch::C_Transpiler);
-  }
-
-  return std::make_unique<StubAssemblerLinker>(TargetArch::X86_64, arch_name);
 }

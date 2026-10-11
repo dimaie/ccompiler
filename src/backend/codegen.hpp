@@ -2,18 +2,12 @@
 #define CODEGEN_HPP
 
 #include "ast.hpp"
+#include "target_spec.hpp"
 #include <memory>
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-
-enum class TargetArch {
-  X86_64,
-  AVR,
-  ARM64,
-  C_Transpiler
-};
 
 enum class LocalVarStorage {
   Auto,     // Architecture default: Memory for AVR, Stack for x86_64/arm64/c
@@ -23,6 +17,7 @@ enum class LocalVarStorage {
 
 struct CodeGenOptions {
   LocalVarStorage local_var_storage{LocalVarStorage::Auto};
+  TargetSpec target_spec;
 };
 
 /**
@@ -130,6 +125,7 @@ public:
 
 class CodeGeneratorFactory {
 public:
+  static std::unique_ptr<ICodeGenerator> create(const TargetSpec &spec, const CodeGenOptions &options = {});
   static std::unique_ptr<ICodeGenerator> create(TargetArch arch, const CodeGenOptions &options = {});
   static std::unique_ptr<ICodeGenerator> create(const std::string &arch_name, const CodeGenOptions &options = {});
 };

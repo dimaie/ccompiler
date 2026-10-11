@@ -237,9 +237,9 @@ Usage: c_compiler [options] <source_files...> [libraries...]
 
 | Flag | Parameter | Description | Default |
 | :--- | :--- | :--- | :--- |
-| **`-t, --target`** | `<arch>` | Target architecture (`x86_64`, `arm64`, `avr`, `c`) | `x86_64` |
+| **`-t, --target`** | `<spec>` | Target architecture and OS specification (`<arch>[-<os>]`) | Host default (`x86_64-windows` / `x86_64-linux`) |
 | **`--type`** | `<type>` | Target file type (`auto`, `exe`, `obj`, `shared`) | `auto` |
-| **`-o, --output`** | `<file>` | Output file name | `a.exe` / `a.out` |
+| **`-o, --output`** | `<file>` | Output file name | `a.exe` (Windows) / `a.out` (Linux) / `a.hex` (AVR) |
 | **`-c`** | — | Compile and assemble only; do not link (generates object modules) | — |
 | **`-S`** | — | Stop after compilation; output assembly text (`.s`) | — |
 | **`-E`** | — | Stop after preprocessing; output preprocessed source | — |
@@ -248,13 +248,34 @@ Usage: c_compiler [options] <source_files...> [libraries...]
 | **`--ast`** | — | Print AST to `stdout` | `false` |
 | **`-shared`** | — | Produce shared library / DLL | `false` |
 | **`-v, --verbose`** | — | Verbose diagnostic output of compiler configuration | `false` |
-| **`--local-vars`** | `<mode>` | Local variable storage (`stack`, `memory`, `auto`) | `auto` |
+| **`--local-vars`** | `<mode>` | Local variable storage (`stack`, `memory`, `auto`) | `auto` (`memory` for AVR, `stack` for others) |
 | **`-I`** | `<dir>` | Add directory to include file search path | — |
 | **`-D`** | `<macro>[=val]`| Define preprocessor macro (defaults to `1` if `=val` omitted) | — |
 | **`-l`** | `<lib>` | Link library name (e.g. `-luser32`) | — |
 | **`-L`** | `<dir>` | Add directory to library search path | — |
 | **`--import`** | `<dll:func>` | Explicitly map symbol to DLL (e.g. `--import user32.dll:MessageBoxA`)| — |
-| **`-h, --help`** | — | Print help and options summary | — |
+| **`-h, --help`** | — | Print help and supported targets summary | — |
+
+### Supported Targets (`-t, --target <spec>`)
+
+The compiler distinguishes targets by **architecture**, **operating system**, **binary format**, and **calling convention / ABI**:
+
+| Target Spec | Architecture | Operating System | Binary Format | Calling Convention / ABI | Description |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `x86_64-windows` | `x86_64` | Windows | PE32+ (`.exe`, `.dll`) | Win64 (`rcx`, `rdx`, `r8`, `r9`, shadow space) | Windows 64-bit PE/COFF binary |
+| `x86_64-linux` | `x86_64` | Linux | Static ELF64 (`ET_EXEC`) | System V AMD64 (`rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`) | Linux 64-bit static executable |
+| `arm64-linux` | `arm64` | Linux | ELF64 / Asm | AAPCS64 (`x0`–`x7`, 16B SP align) | Linux 64-bit ARMv8-A (Raspberry Pi, etc.) |
+| `avr-none` | `avr` | Bare-Metal | Intel HEX (`.hex`) | AVR Default (r24:r25 return, r1 zero) | Arduino Uno / ATmega328P flash firmware |
+| `c-none` | `c` | None | Portable C Source | None | Portable ANSI C / C99 transpilation |
+
+#### Target Format Syntax & Aliases
+- Syntax: `-t <arch>[-<os>]`
+- Common Aliases:
+  - `x86_64`, `amd64` $\rightarrow$ Host platform default (`x86_64-windows` on Windows, `x86_64-linux` on Linux)
+  - `linux`, `elf64` $\rightarrow$ `x86_64-linux`
+  - `arm64`, `aarch64`, `rpi` $\rightarrow$ `arm64-linux`
+  - `avr`, `arduino`, `atmega328p` $\rightarrow$ `avr-none`
+  - `c`, `c_transpiler` $\rightarrow$ `c-none`
 
 ### Stop Phases
 

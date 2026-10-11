@@ -164,6 +164,7 @@ private:
  */
 class AssemblerLinkerFactory {
 public:
+  static std::unique_ptr<IAssemblerLinker> create(const TargetSpec &spec);
   static std::unique_ptr<IAssemblerLinker> create(TargetArch arch);
   static std::unique_ptr<IAssemblerLinker> create(const std::string &arch_name);
 };

@@ -5,6 +5,7 @@
 #include <string>
 
 struct TargetInfo {
+  TargetSpec spec;
   TargetArch arch{TargetArch::X86_64};
   std::string name{"x86_64"};
   LocalVarStorage local_var_storage{LocalVarStorage::Auto};
@@ -77,26 +78,23 @@ struct TargetInfo {
     return info;
   }
 
-  static TargetInfo from_string(const std::string &arch_name, LocalVarStorage storage = LocalVarStorage::Auto) {
-    std::string lower = arch_name;
-    for (char &c : lower) {
-      if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
-    }
-    TargetInfo info;
-    if (lower == "x86" || lower == "x86_64" || lower == "x86-64" || lower == "amd64" ||
-        lower == "linux" || lower == "x86_64-linux" || lower == "elf64" || lower == "elf") {
-      info = get(TargetArch::X86_64);
-    } else if (lower == "avr" || lower == "arduino" || lower == "atmega328p") {
-      info = get(TargetArch::AVR);
-    } else if (lower == "arm" || lower == "arm64" || lower == "aarch64" || lower == "rpi" || lower == "raspberrypi") {
-      info = get(TargetArch::ARM64);
-    } else if (lower == "c" || lower == "c_transpiler") {
-      info = get(TargetArch::C_Transpiler);
-    } else {
-      info = get(TargetArch::X86_64);
-    }
+  static TargetInfo from_spec(const TargetSpec &spec, LocalVarStorage storage = LocalVarStorage::Auto) {
+    TargetInfo info = get(spec.arch);
+    info.spec = spec;
+    info.name = spec.to_string();
     info.local_var_storage = storage;
     return info;
+  }
+
+  static TargetInfo from_string(const std::string &arch_name, LocalVarStorage storage = LocalVarStorage::Auto) {
+    try {
+      TargetSpec spec = TargetSpec::parse(arch_name);
+      return from_spec(spec, storage);
+    } catch (...) {
+      TargetInfo info = get(TargetArch::X86_64);
+      info.local_var_storage = storage;
+      return info;
+    }
   }
 };
 

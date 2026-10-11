@@ -38,6 +38,7 @@ set(IR_SOURCES
 )
 
 set(BACKEND_SOURCES
+    src/backend/target_spec.cpp
     src/backend/codegen.cpp
     src/backend/assembler_linker.cpp
     src/backend/x86_64/codegen_x86_64.cpp
@@ -83,6 +84,7 @@ add_executable(test_codegen
 add_executable(test_ir
     ${FRONTEND_SOURCES}
     ${IR_SOURCES}
+    src/backend/target_spec.cpp
     tests/test_ir.cpp
 )
 

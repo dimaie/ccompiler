@@ -18,6 +18,11 @@ void CompilerConfig::print(std::ostream &out) const {
   }
   out << "  Output File:    " << (general.output_filename.empty() ? "(default)" : general.output_filename) << "\n";
   out << "  Target:         " << general.target << "\n";
+  out << "  Target Spec:    " << general.target_spec.to_string()
+      << " (Arch: " << target_arch_str(general.target_spec.arch)
+      << ", OS: " << target_os_str(general.target_spec.os)
+      << ", Format: " << target_format_str(general.target_spec.format)
+      << ", ABI: " << target_abi_str(general.target_spec.abi) << ")\n";
   out << "  Target Type:    " << target_file_type_str(general.target_file_type) << "\n";
   out << "  Stop Phase:     ";
   switch (general.stop_phase) {
@@ -119,10 +124,10 @@ void CompilerConfig::print(std::ostream &out) const {
 void CommandLineParser::print_usage(const char *prog_name, std::ostream &out) {
   out << "Usage: " << prog_name << " [options] <source_files...> [libraries...]\n\n"
       << "Options:\n"
-      << "  -t, --target <arch>    Target architecture (x86_64, arm64, avr, c) [default: x86_64]\n"
+      << "  -t, --target <spec>    Target architecture and OS specification [default: host default]\n"
       << "  --type <type>          Target file type (auto, exe, obj, shared) [default: auto]\n"
       << "  --local-vars <mode>    Local variable storage (stack, memory) [default: memory for avr, stack for others]\n"
-      << "  -o, --output <file>    Output file [default: a.exe (Windows) / a.out]\n"
+      << "  -o, --output <file>    Output file [default: a.exe (Windows) / a.out (Linux) / a.hex (AVR)]\n"
       << "  -c                     Compile and assemble only; do not link\n"
       << "  -S                     Stop after compilation phase; output assembly code\n"
       << "  -E                     Stop after preprocessing phase; output preprocessed source\n"
@@ -136,7 +141,9 @@ void CommandLineParser::print_usage(const char *prog_name, std::ostream &out) {
       << "  -L<dir>                Add directory to library search path\n"
       << "  --import <dll:func>    Explicitly map symbol to DLL (e.g. --import user32.dll:MessageBoxA)\n"
       << "  --ast                  Print AST to stdout\n"
-      << "  -h, --help             Display this help message\n";
+      << "  -h, --help             Display this help message\n\n";
+
+  TargetSpec::print_supported_targets(out);
 }
 
 bool CommandLineParser::parse(int argc, char *argv[], CompilerConfig &config,
@@ -280,7 +287,13 @@ bool CommandLineParser::parse(const std::vector<std::string> &args, CompilerConf
       return false;
     }
     if (res == MatchResult::Success) {
-      config.general.target = val;
+      try {
+        config.general.target_spec = TargetSpec::parse(val);
+        config.general.target = val;
+      } catch (const std::exception &e) {
+        error_message = e.what();
+        return false;
+      }
       continue;
     }
 

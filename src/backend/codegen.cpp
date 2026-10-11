@@ -32,29 +32,16 @@ std::unique_ptr<ICodeGenerator> CodeGeneratorFactory::create(TargetArch arch, co
 }
 
 std::unique_ptr<ICodeGenerator>
+CodeGeneratorFactory::create(const TargetSpec &spec, const CodeGenOptions &options) {
+  CodeGenOptions opts = options;
+  opts.target_spec = spec;
+  return create(spec.arch, opts);
+}
+
+std::unique_ptr<ICodeGenerator>
 CodeGeneratorFactory::create(const std::string &arch_name, const CodeGenOptions &options) {
-  std::string lower = arch_name;
-  std::transform(lower.begin(), lower.end(), lower.begin(),
-                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-  if (lower == "x86" || lower == "x86_64" || lower == "x86-64" ||
-      lower == "amd64" || lower == "linux" || lower == "x86_64-linux" ||
-      lower == "elf64" || lower == "elf") {
-    return create(TargetArch::X86_64, options);
-  }
-  if (lower == "avr" || lower == "arduino" || lower == "atmega328p") {
-    return create(TargetArch::AVR, options);
-  }
-  if (lower == "arm" || lower == "arm64" || lower == "aarch64" ||
-      lower == "rpi" || lower == "raspberrypi") {
-    return create(TargetArch::ARM64, options);
-  }
-  if (lower == "c" || lower == "c_transpiler") {
-    return create(TargetArch::C_Transpiler, options);
-  }
-
-  throw std::runtime_error("Unknown target architecture: " + arch_name +
-                           " (supported: x86_64, avr, arm64, c)");
+  TargetSpec spec = TargetSpec::parse(arch_name);
+  return create(spec, options);
 }
 
 void ICodeGenerator::visit(const ProgramNode &node) {

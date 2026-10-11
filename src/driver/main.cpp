@@ -49,7 +49,7 @@ int main(int argc, char *argv[]) {
   }
 
   std::vector<std::string> generated_assembly_list;
-  auto linker = AssemblerLinkerFactory::create(config.general.target);
+  auto linker = AssemblerLinkerFactory::create(config.general.target_spec);
 
   for (size_t file_idx = 0; file_idx < config.general.input_filenames.size(); ++file_idx) {
     const std::string &input_name = config.general.input_filenames[file_idx];
@@ -105,7 +105,7 @@ int main(int argc, char *argv[]) {
         ast->print(0);
       }
 
-      TargetInfo target_info = TargetInfo::from_string(config.general.target, config.codegen.local_var_storage);
+      TargetInfo target_info = TargetInfo::from_spec(config.general.target_spec, config.codegen.local_var_storage);
       IRBuilder ir_builder(target_info);
       IRModule ir_mod = ir_builder.build(*ast);
 
@@ -138,7 +138,7 @@ int main(int argc, char *argv[]) {
         continue;
       }
 
-      auto codegen = CodeGeneratorFactory::create(config.general.target, config.get_codegen_options());
+      auto codegen = CodeGeneratorFactory::create(config.general.target_spec, config.get_codegen_options());
       std::ostringstream generated_out;
       codegen->generate(*ast, generated_out);
       std::string asm_str = generated_out.str();
@@ -218,18 +218,7 @@ int main(int argc, char *argv[]) {
   // Default executable / binary destination
   std::string exe_path = config.general.output_filename;
   if (exe_path.empty()) {
-    if (config.general.target == "avr" || config.general.target == "arduino") {
-      exe_path = "a.hex";
-    } else if (config.general.target == "linux" || config.general.target == "x86_64-linux" ||
-               config.general.target == "elf64" || config.general.target == "elf") {
-      exe_path = "a.out";
-    } else {
-#ifdef _WIN32
-      exe_path = "a.exe";
-#else
-      exe_path = "a.out";
-#endif
-    }
+    exe_path = config.general.target_spec.default_output_filename();
   }
 
   linker->set_linker_config(config.linker);
