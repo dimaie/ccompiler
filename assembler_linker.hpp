@@ -49,9 +49,6 @@ public:
   AssemblerLinkerResult assemble_and_link(
       const std::string &assembly_code,
       const std::string &output_filepath) override;
-
-private:
-  std::string find_toolchain() const;
 };
 
 /**

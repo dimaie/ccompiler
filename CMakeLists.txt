@@ -26,6 +26,8 @@ set(CODEGEN_SOURCES
     codegen_arm64.cpp
     codegen_avr.cpp
     codegen_c.cpp
+    internal_assembler.cpp
+    internal_pe_linker.cpp
     assembler_linker.cpp
 )
 

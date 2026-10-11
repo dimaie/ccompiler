@@ -1143,6 +1143,29 @@ static void test_assembler_linker() {
     std::error_code ec;
     std::filesystem::remove(exe_path, ec);
   }
+
+  // 4. Embedded assembler and linker: complex functions, string literals & puts
+  {
+    auto x86_linker = AssemblerLinkerFactory::create("x86_64");
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse("int add(int a, int b) { return a + b; }\n"
+                      "int main() {\n"
+                      "  puts(\"Testing self-contained linking!\");\n"
+                      "  return add(10, 20);\n"
+                      "}\n");
+    std::string asm_code = gen->generate_to_string(*prog);
+
+    std::string exe_path = "test_complex_exe.exe";
+    auto res = x86_linker->assemble_and_link(asm_code, exe_path);
+    assert(res.success);
+    assert(std::filesystem::exists(exe_path));
+
+    int code = std::system(".\\test_complex_exe.exe");
+    assert(code == 30);
+
+    std::error_code ec;
+    std::filesystem::remove(exe_path, ec);
+  }
 }
 
 int main() {
