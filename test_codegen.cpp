@@ -1,5 +1,6 @@
 #include "assembler_linker.hpp"
 #include "codegen.hpp"
+#include "compiler_config.hpp"
 #include "lexer.hpp"
 #include "parser.hpp"
 #include <cassert>
@@ -1560,6 +1561,153 @@ static void test_local_var_storage_options() {
   }
 }
 
+static void test_command_line_parser() {
+  std::cout << "Testing CommandLineParser and CompilerConfig...\n";
+
+  CommandLineParser parser;
+  CompilerConfig config;
+  std::string err;
+  bool help = false;
+
+  // 1. Basic flags and options with spaces
+  {
+    std::vector<std::string> args = {
+        "-t", "avr",
+        "-o", "out.s",
+        "-S",
+        "-v",
+        "--ast",
+        "--local-vars", "memory",
+        "-I", "include/path",
+        "-D", "MAX_LEN=128",
+        "-l", "m",
+        "-L", "lib/dir",
+        "--import", "user32.dll:MessageBoxA",
+        "main.c"
+    };
+    bool ok = parser.parse(args, config, err, help);
+    assert(ok);
+    assert(!help);
+    assert(config.general.target == "avr");
+    assert(config.general.output_filename == "out.s");
+    assert(config.general.stop_phase == StopPhase::AssembleOnly);
+    assert(config.general.verbose == true);
+    assert(config.general.show_ast == true);
+    assert(config.codegen.local_var_storage == LocalVarStorage::Memory);
+    assert(config.preprocessor.include_dirs.size() == 1 && config.preprocessor.include_dirs[0] == "include/path");
+    assert(config.preprocessor.defined_macros.size() == 1 && config.preprocessor.defined_macros[0] == "MAX_LEN=128");
+    assert(config.linker.lib_names.size() == 1 && config.linker.lib_names[0] == "m");
+    assert(config.linker.lib_dirs.size() == 1 && config.linker.lib_dirs[0] == "lib/dir");
+    assert(config.linker.explicit_imports["MessageBoxA"] == "user32.dll");
+    assert(config.general.input_filename == "main.c");
+
+    // Test CompilerConfig::print() console output
+    std::ostringstream ss;
+    config.print(ss);
+    std::string dumped = ss.str();
+    assert(dumped.find("=== Compiler Configuration ===") != std::string::npos);
+    assert(dumped.find("[General]") != std::string::npos);
+    assert(dumped.find("Target:         avr") != std::string::npos);
+    assert(dumped.find("Stop Phase:     AssembleOnly (-S)") != std::string::npos);
+    assert(dumped.find("Verbose:        true") != std::string::npos);
+    assert(dumped.find("[Preprocessor]") != std::string::npos);
+    assert(dumped.find("include/path") != std::string::npos);
+    assert(dumped.find("MAX_LEN=128") != std::string::npos);
+    assert(dumped.find("[CodeGen]") != std::string::npos);
+    assert(dumped.find("Local Var Mode: memory") != std::string::npos);
+    assert(dumped.find("[Linker]") != std::string::npos);
+    assert(dumped.find("MessageBoxA=user32.dll") != std::string::npos);
+  }
+
+  // 2. Consistent syntax with '=' and attached options (-Ipath, -t=..., --target=..., etc.)
+  {
+    CompilerConfig cfg2;
+    std::vector<std::string> args = {
+        "--target=arm64",
+        "--output=out.bin",
+        "-E",
+        "--local-vars=stack",
+        "-Icustom/inc",
+        "-DDEBUG",
+        "-lkernel32",
+        "-Lcustom/lib",
+        "--import=user32.dll:ShowWindow",
+        "custom.lib",
+        "helper.a",
+        "user32.dll",
+        "source.c"
+    };
+    bool ok = parser.parse(args, cfg2, err, help);
+    assert(ok);
+    assert(cfg2.general.target == "arm64");
+    assert(cfg2.general.output_filename == "out.bin");
+    assert(cfg2.general.stop_phase == StopPhase::PreprocessOnly);
+    assert(cfg2.codegen.local_var_storage == LocalVarStorage::Stack);
+    assert(cfg2.preprocessor.include_dirs.size() == 1 && cfg2.preprocessor.include_dirs[0] == "custom/inc");
+    assert(cfg2.preprocessor.defined_macros.size() == 1 && cfg2.preprocessor.defined_macros[0] == "DEBUG");
+    assert(cfg2.linker.lib_names.size() == 1 && cfg2.linker.lib_names[0] == "kernel32");
+    assert(cfg2.linker.lib_dirs.size() == 1 && cfg2.linker.lib_dirs[0] == "custom/lib");
+    assert(cfg2.linker.lib_files.size() == 2 && cfg2.linker.lib_files[0] == "custom.lib" && cfg2.linker.lib_files[1] == "helper.a");
+    assert(cfg2.linker.explicit_dlls.size() == 1 && cfg2.linker.explicit_dlls[0] == "user32.dll");
+    assert(cfg2.general.input_filename == "source.c");
+  }
+
+  // 3. Stdin as input file "-"
+  {
+    CompilerConfig cfg_stdin;
+    std::vector<std::string> args = {"-t=c", "-"};
+    bool ok = parser.parse(args, cfg_stdin, err, help);
+    assert(ok);
+    assert(cfg_stdin.general.target == "c");
+    assert(cfg_stdin.general.input_filename == "-");
+  }
+
+  // 4. Help flag detection
+  {
+    CompilerConfig cfg_help;
+    std::vector<std::string> args = {"--help"};
+    bool ok = parser.parse(args, cfg_help, err, help);
+    assert(ok);
+    assert(help == true);
+  }
+
+  // 5. Error handling: missing argument
+  {
+    CompilerConfig cfg_err;
+    std::vector<std::string> args = {"-t"};
+    bool ok = parser.parse(args, cfg_err, err, help);
+    assert(!ok);
+    assert(err.find("Missing argument for -t") != std::string::npos);
+  }
+
+  // 6. Error handling: unknown option
+  {
+    CompilerConfig cfg_err;
+    std::vector<std::string> args = {"--unknown-flag", "main.c"};
+    bool ok = parser.parse(args, cfg_err, err, help);
+    assert(!ok);
+    assert(err.find("Unknown option '--unknown-flag'") != std::string::npos);
+  }
+
+  // 7. Error handling: multiple input files
+  {
+    CompilerConfig cfg_err;
+    std::vector<std::string> args = {"file1.c", "file2.c"};
+    bool ok = parser.parse(args, cfg_err, err, help);
+    assert(!ok);
+    assert(err.find("Multiple input files specified") != std::string::npos);
+  }
+
+  // 8. Error handling: no input file
+  {
+    CompilerConfig cfg_err;
+    std::vector<std::string> args = {"-t", "x86_64"};
+    bool ok = parser.parse(args, cfg_err, err, help);
+    assert(!ok);
+    assert(err.find("No input file specified") != std::string::npos);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Code Generator Test Suite\n";
@@ -1584,9 +1732,10 @@ int main() {
   test_linker_libraries();
   test_calling_conventions_codegen();
   test_local_var_storage_options();
+  test_command_line_parser();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL CODEGEN TESTS PASSED! (19/19)\n";
+  std::cout << "  ALL CODEGEN TESTS PASSED! (20/20)\n";
   std::cout << "========================================\n";
   return 0;
 }

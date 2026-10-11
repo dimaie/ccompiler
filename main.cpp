@@ -1,5 +1,6 @@
 #include "assembler_linker.hpp"
 #include "codegen.hpp"
+#include "compiler_config.hpp"
 #include "lexer.hpp"
 #include "parser.hpp"
 #include "preprocessor.hpp"
@@ -9,161 +10,37 @@
 #include <string>
 #include <vector>
 
-static void print_usage(const char *prog_name) {
-  std::cerr << "Usage: " << prog_name << " [options] <source_file> [libraries...]\n\n"
-            << "Options:\n"
-            << "  -t, --target <arch>    Target architecture (x86_64, arm64, avr, c) [default: x86_64]\n"
-            << "  --local-vars <mode>    Local variable storage (stack, memory) [default: memory for avr, stack for others]\n"
-            << "  -o, --output <file>    Output file [default: a.exe (Windows) / a.out]\n"
-            << "  -S                     Stop after compilation phase; output assembly code\n"
-            << "  -E                     Stop after preprocessing phase; output preprocessed source\n"
-            << "  -I <dir>               Add directory to include search path\n"
-            << "  -D <macro>[=val]       Define preprocessor macro\n"
-            << "  -l<lib>                Link against library archive or DLL (e.g. -luser32)\n"
-            << "  -L<dir>                Add directory to library search path\n"
-            << "  --import <dll:func>    Explicitly map symbol to DLL (e.g. --import user32.dll:MessageBoxA)\n"
-            << "  --ast                  Print AST to stdout\n"
-            << "  -h, --help             Display this help message\n";
-}
-
 int main(int argc, char *argv[]) {
-  std::string input_filename;
-  std::string output_filename;
-  std::string target = "x86_64";
-  std::string local_vars_mode = "auto";
-  bool show_ast = false;
-  bool emit_asm_only = false;
-  bool preprocess_only = false;
-  std::vector<std::string> include_dirs;
-  std::vector<std::string> defined_macros;
-  LinkerConfig linker_config;
+  CompilerConfig config;
+  CommandLineParser parser;
+  std::string error_msg;
+  bool help_requested = false;
 
-  for (int i = 1; i < argc; ++i) {
-    std::string arg = argv[i];
-    if (arg == "-h" || arg == "--help") {
-      print_usage(argv[0]);
-      return 0;
-    } else if (arg == "--ast") {
-      show_ast = true;
-    } else if (arg == "-S") {
-      emit_asm_only = true;
-    } else if (arg == "-E") {
-      preprocess_only = true;
-    } else if (arg == "--local-vars") {
-      if (i + 1 >= argc) {
-        std::cerr << "Error: Missing argument for --local-vars\n";
-        return 1;
-      }
-      local_vars_mode = argv[++i];
-    } else if (arg.rfind("--local-vars=", 0) == 0) {
-      local_vars_mode = arg.substr(13);
-    } else if (arg == "-I") {
-      if (i + 1 >= argc) {
-        std::cerr << "Error: Missing argument for -I\n";
-        return 1;
-      }
-      include_dirs.push_back(argv[++i]);
-    } else if (arg.rfind("-I", 0) == 0 && arg.size() > 2) {
-      include_dirs.push_back(arg.substr(2));
-    } else if (arg == "-D") {
-      if (i + 1 >= argc) {
-        std::cerr << "Error: Missing argument for -D\n";
-        return 1;
-      }
-      defined_macros.push_back(argv[++i]);
-    } else if (arg.rfind("-D", 0) == 0 && arg.size() > 2) {
-      defined_macros.push_back(arg.substr(2));
-    } else if (arg == "-l") {
-      if (i + 1 >= argc) {
-        std::cerr << "Error: Missing argument for -l\n";
-        return 1;
-      }
-      linker_config.lib_names.push_back(argv[++i]);
-    } else if (arg.rfind("-l", 0) == 0 && arg.size() > 2) {
-      linker_config.lib_names.push_back(arg.substr(2));
-    } else if (arg == "-L") {
-      if (i + 1 >= argc) {
-        std::cerr << "Error: Missing argument for -L\n";
-        return 1;
-      }
-      linker_config.lib_dirs.push_back(argv[++i]);
-    } else if (arg.rfind("-L", 0) == 0 && arg.size() > 2) {
-      linker_config.lib_dirs.push_back(arg.substr(2));
-    } else if (arg == "--import") {
-      if (i + 1 >= argc) {
-        std::cerr << "Error: Missing argument for --import\n";
-        return 1;
-      }
-      std::string spec = argv[++i];
-      size_t eq = spec.find('=');
-      size_t colon = spec.find(':');
-      if (eq != std::string::npos) {
-        linker_config.explicit_imports[spec.substr(0, eq)] = spec.substr(eq + 1);
-      } else if (colon != std::string::npos) {
-        std::string p1 = spec.substr(0, colon);
-        std::string p2 = spec.substr(colon + 1);
-        std::string p1_lower = p1;
-        for (char &c : p1_lower) c = std::tolower(c);
-        if (p1_lower.rfind(".dll") != std::string::npos) {
-          linker_config.explicit_imports[p2] = p1;
-        } else {
-          linker_config.explicit_imports[p1] = p2;
-        }
-      } else {
-        std::cerr << "Error: Invalid format for --import. Expected <dll:symbol> or <symbol=dll>\n";
-        return 1;
-      }
-    } else if (arg == "-t" || arg == "--target") {
-      if (i + 1 >= argc) {
-        std::cerr << "Error: Missing argument for " << arg << "\n";
-        return 1;
-      }
-      target = argv[++i];
-    } else if (arg == "-o" || arg == "--output") {
-      if (i + 1 >= argc) {
-        std::cerr << "Error: Missing argument for " << arg << "\n";
-        return 1;
-      }
-      output_filename = argv[++i];
-    } else if (arg == "-" || (!arg.empty() && arg[0] != '-')) {
-      std::string lower = arg;
-      for (char &c : lower) c = std::tolower(c);
-      if (lower.size() > 4 && lower.substr(lower.size() - 4) == ".lib") {
-        linker_config.lib_files.push_back(arg);
-      } else if (lower.size() > 2 && lower.substr(lower.size() - 2) == ".a") {
-        linker_config.lib_files.push_back(arg);
-      } else if (lower.size() > 4 && lower.substr(lower.size() - 4) == ".dll") {
-        linker_config.explicit_dlls.push_back(arg);
-      } else {
-        if (!input_filename.empty()) {
-          std::cerr << "Error: Multiple input files specified ('"
-                    << input_filename << "' and '" << arg << "')\n";
-          return 1;
-        }
-        input_filename = arg;
-      }
-    } else {
-      std::cerr << "Error: Unknown option '" << arg << "'\n";
-      print_usage(argv[0]);
-      return 1;
-    }
-  }
-
-  if (input_filename.empty()) {
-    std::cerr << "Error: No input file specified.\n";
-    print_usage(argv[0]);
+  if (!parser.parse(argc, argv, config, error_msg, help_requested)) {
+    std::cerr << "Error: " << error_msg << "\n";
+    CommandLineParser::print_usage(argv[0]);
     return 1;
   }
 
+  if (help_requested) {
+    CommandLineParser::print_usage(argv[0], std::cout);
+    return 0;
+  }
+
+  // Configuration output must be done before any task run by the compiler if verbose is set
+  if (config.general.verbose) {
+    config.print(std::cout);
+  }
+
   std::string code;
-  if (input_filename == "-") {
+  if (config.general.input_filename == "-") {
     std::stringstream buffer;
     buffer << std::cin.rdbuf();
     code = buffer.str();
   } else {
-    std::ifstream file(input_filename);
+    std::ifstream file(config.general.input_filename);
     if (!file.is_open()) {
-      std::cerr << "Error: Could not open input file '" << input_filename << "'\n";
+      std::cerr << "Error: Could not open input file '" << config.general.input_filename << "'\n";
       return 1;
     }
     std::stringstream buffer;
@@ -173,10 +50,10 @@ int main(int argc, char *argv[]) {
 
   // Preprocessing phase
   Preprocessor preprocessor;
-  for (const auto &dir : include_dirs) {
+  for (const auto &dir : config.preprocessor.include_dirs) {
     preprocessor.add_include_dir(dir);
   }
-  for (const auto &m : defined_macros) {
+  for (const auto &m : config.preprocessor.defined_macros) {
     size_t eq = m.find('=');
     if (eq != std::string::npos) {
       preprocessor.define_macro(m.substr(0, eq), m.substr(eq + 1));
@@ -187,17 +64,17 @@ int main(int argc, char *argv[]) {
 
   std::string preprocessed_code;
   try {
-    preprocessed_code = preprocessor.process(code, (input_filename == "-") ? "" : input_filename);
+    preprocessed_code = preprocessor.process(code, (config.general.input_filename == "-") ? "" : config.general.input_filename);
   } catch (const std::exception &e) {
     std::cerr << "Error: " << e.what() << "\n";
     return 1;
   }
 
-  if (preprocess_only) {
-    if (!output_filename.empty()) {
-      std::ofstream out_file(output_filename);
+  if (config.general.stop_phase == StopPhase::PreprocessOnly) {
+    if (!config.general.output_filename.empty()) {
+      std::ofstream out_file(config.general.output_filename);
       if (!out_file.is_open()) {
-        std::cerr << "Error: Could not open output file '" << output_filename << "'\n";
+        std::cerr << "Error: Could not open output file '" << config.general.output_filename << "'\n";
         return 1;
       }
       out_file << preprocessed_code;
@@ -210,46 +87,31 @@ int main(int argc, char *argv[]) {
   Lexer lexer;
   lexer.init(preprocessed_code.c_str());
 
-  Parser parser(&lexer);
+  Parser parser_obj(&lexer);
   try {
-    auto ast = parser.parse_program();
+    auto ast = parser_obj.parse_program();
 
-    if (show_ast) {
-      if (output_filename.empty()) {
+    if (config.general.show_ast) {
+      if (config.general.output_filename.empty()) {
         std::cerr << "=== Abstract Syntax Tree ===\n";
       }
       ast->print(0);
     }
 
-    LocalVarStorage storage = LocalVarStorage::Auto;
-    if (local_vars_mode == "stack") {
-      storage = LocalVarStorage::Stack;
-    } else if (local_vars_mode == "memory" || local_vars_mode == "static") {
-      storage = LocalVarStorage::Memory;
-    } else if (local_vars_mode == "auto") {
-      storage = LocalVarStorage::Auto;
-    } else {
-      std::cerr << "Error: Invalid argument for --local-vars ('" << local_vars_mode
-                << "'). Expected 'stack' or 'memory'\n";
-      return 1;
-    }
-
-    CodeGenOptions codegen_opts;
-    codegen_opts.local_var_storage = storage;
-    auto codegen = CodeGeneratorFactory::create(target, codegen_opts);
+    auto codegen = CodeGeneratorFactory::create(config.general.target, config.get_codegen_options());
     std::ostringstream generated_out;
     codegen->generate(*ast, generated_out);
 
-    if (emit_asm_only) {
-      if (!output_filename.empty()) {
-        std::ofstream out_file(output_filename);
+    if (config.general.stop_phase == StopPhase::AssembleOnly) {
+      if (!config.general.output_filename.empty()) {
+        std::ofstream out_file(config.general.output_filename);
         if (!out_file.is_open()) {
-          std::cerr << "Error: Could not open output file '" << output_filename << "'\n";
+          std::cerr << "Error: Could not open output file '" << config.general.output_filename << "'\n";
           return 1;
         }
         out_file << generated_out.str();
         if (!out_file.good()) {
-          std::cerr << "Error: Failed to write to output file '" << output_filename << "'\n";
+          std::cerr << "Error: Failed to write to output file '" << config.general.output_filename << "'\n";
           return 1;
         }
       } else {
@@ -258,24 +120,24 @@ int main(int argc, char *argv[]) {
       return 0;
     }
 
-    auto linker = AssemblerLinkerFactory::create(target);
+    auto linker = AssemblerLinkerFactory::create(config.general.target);
     if (!linker->is_supported()) {
       // Stub: Stop at generating assembly phase and report feature not yet available
       std::cerr << "Notice: Assembler and linker features are not yet available for target '"
-                << target << "'. Compilation stopped at assembly phase.\n";
+                << config.general.target << "'. Compilation stopped at assembly phase.\n";
 
-      if (!output_filename.empty()) {
-        std::ofstream out_file(output_filename);
+      if (!config.general.output_filename.empty()) {
+        std::ofstream out_file(config.general.output_filename);
         if (out_file.is_open()) {
           out_file << generated_out.str();
         }
-      } else if (input_filename != "-") {
-        std::string fallback_asm = input_filename;
+      } else if (config.general.input_filename != "-") {
+        std::string fallback_asm = config.general.input_filename;
         auto dot_pos = fallback_asm.find_last_of('.');
         if (dot_pos != std::string::npos) {
           fallback_asm = fallback_asm.substr(0, dot_pos);
         }
-        fallback_asm += (target == "c" ? ".transpiled.c" : ".s");
+        fallback_asm += (config.general.target == "c" ? ".transpiled.c" : ".s");
         std::ofstream out_file(fallback_asm);
         if (out_file.is_open()) {
           out_file << generated_out.str();
@@ -288,7 +150,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Default executable destination
-    std::string exe_path = output_filename;
+    std::string exe_path = config.general.output_filename;
     if (exe_path.empty()) {
 #ifdef _WIN32
       exe_path = "a.exe";
@@ -297,7 +159,7 @@ int main(int argc, char *argv[]) {
 #endif
     }
 
-    linker->set_linker_config(linker_config);
+    linker->set_linker_config(config.linker);
     auto link_res = linker->assemble_and_link(generated_out.str(), exe_path);
     if (!link_res.success) {
       std::cerr << "Error: " << link_res.message << "\n";

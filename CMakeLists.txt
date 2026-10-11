@@ -30,6 +30,7 @@ set(CODEGEN_SOURCES
     internal_assembler.cpp
     internal_pe_linker.cpp
     assembler_linker.cpp
+    compiler_config.cpp
 )
 
 # Compiler executable
