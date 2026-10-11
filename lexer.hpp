@@ -61,6 +61,7 @@ enum TokenType {
   TOK_KW_UNSIGNED,
   TOK_KW_VOID,
   TOK_KW_VOLATILE,
+  TOK_KW_ASM,
   TOK_KW_WHILE,
 
   /* Punctuation & Delimiters */

@@ -1574,6 +1574,45 @@ static void test_preprocessor() {
   }
 }
 
+static void test_inline_asm() {
+  std::cout << "Testing Inline Assembly Parsing...\n";
+
+  // 1. Basic asm statement
+  {
+    auto prog = parse_source("asm(\"nop\");\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::AsmStmt);
+    auto *asm_node = static_cast<AsmStmtNode *>(prog->statements[0].get());
+    assert(asm_node->asm_code == "nop");
+    assert(!asm_node->is_volatile);
+  }
+
+  // 2. __asm__ volatile ("...")
+  {
+    auto prog = parse_source("__asm__ volatile (\"int3\");\n");
+    assert(prog->statements.size() == 1);
+    auto *asm_node = static_cast<AsmStmtNode *>(prog->statements[0].get());
+    assert(asm_node->asm_code == "int3");
+    assert(asm_node->is_volatile);
+  }
+
+  // 3. String concatenation in asm
+  {
+    auto prog = parse_source("asm(\"nop\\n\" \"nop\");\n");
+    assert(prog->statements.size() == 1);
+    auto *asm_node = static_cast<AsmStmtNode *>(prog->statements[0].get());
+    assert(asm_node->asm_code.find("nop") != std::string::npos);
+  }
+
+  // 4. Extended asm with operands skipped/handled
+  {
+    auto prog = parse_source("asm(\"movq %0, %rax\" : \"=r\" (val));\n");
+    assert(prog->statements.size() == 1);
+    auto *asm_node = static_cast<AsmStmtNode *>(prog->statements[0].get());
+    assert(asm_node->asm_code == "movq %0, %rax");
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running AST & Parser Test Suite\n";
@@ -1609,9 +1648,10 @@ int main() {
   test_code_review_fixes();
   test_char_and_string_literals();
   test_preprocessor();
+  test_inline_asm();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (30/30)\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (31/31)\n";
   std::cout << "========================================\n";
   return 0;
 }

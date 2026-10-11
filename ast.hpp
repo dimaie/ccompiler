@@ -34,7 +34,8 @@ enum class ASTNodeType {
   StringLit,
   Identifier,
   StructDef,
-  MemberAccess
+  MemberAccess,
+  AsmStmt
 };
 
 enum class DataType {
@@ -138,6 +139,7 @@ class StringLitNode;
 class IdentifierNode;
 class StructDefNode;
 class MemberAccessNode;
+class AsmStmtNode;
 
 /**
  * @brief Abstract Visitor interface for AST operations (codegen, analysis, etc.)
@@ -172,6 +174,7 @@ public:
   virtual void visit(const IdentifierNode &node) = 0;
   virtual void visit(const StructDefNode &node) = 0;
   virtual void visit(const MemberAccessNode &node) = 0;
+  virtual void visit(const AsmStmtNode &node) = 0;
 };
 
 class ASTNode {
@@ -901,6 +904,23 @@ public:
     if (object) {
       object->print(indent + 1);
     }
+  }
+};
+
+class AsmStmtNode : public ASTNode {
+public:
+  std::string asm_code;
+  bool is_volatile{false};
+
+  AsmStmtNode(int line, std::string asm_code, bool is_volatile = false)
+      : ASTNode(line), asm_code(std::move(asm_code)), is_volatile(is_volatile) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::AsmStmt; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    std::cout << "AsmStmt: \"" << asm_code << "\"\n";
   }
 };
 

@@ -8,6 +8,7 @@ int main() {
   puts(MESSAGE);
 #ifdef DEBUG
   puts(DEBUG_MESSAGE);
+  __asm__ volatile ("nop");
 #endif
   return 0;
 }

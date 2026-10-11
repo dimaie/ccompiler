@@ -35,7 +35,11 @@ constexpr KeywordMap KEYWORDS[] = {
     {"struct", TOK_KW_STRUCT},     {"switch", TOK_KW_SWITCH},
     {"typedef", TOK_KW_TYPEDEF},   {"union", TOK_KW_UNION},
     {"unsigned", TOK_KW_UNSIGNED}, {"void", TOK_KW_VOID},
-    {"volatile", TOK_KW_VOLATILE}, {"while", TOK_KW_WHILE},
+    {"volatile", TOK_KW_VOLATILE}, {"__volatile__", TOK_KW_VOLATILE},
+    {"__volatile", TOK_KW_VOLATILE},
+    {"asm", TOK_KW_ASM},           {"__asm__", TOK_KW_ASM},
+    {"__asm", TOK_KW_ASM},
+    {"while", TOK_KW_WHILE},
     {nullptr, TOK_UNKNOWN}};
 
 } // namespace

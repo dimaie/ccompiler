@@ -194,13 +194,33 @@ AssembledModule X86_64InternalAssembler::assemble(const std::string &assembly_so
       if (reg >= 8) emit_bytes(module.text_bytes, {0x41, static_cast<uint8_t>(0x58 + (reg - 8))});
       else emit_bytes(module.text_bytes, {static_cast<uint8_t>(0x58 + reg)});
     }
-    // 2. leave / ret / cqto
+    // 2. leave / ret / cqto / nop / syscall / int3 / pause / ud2
     else if (mnemonic == "leave") {
       emit_bytes(module.text_bytes, {0xC9});
     } else if (mnemonic == "ret") {
       emit_bytes(module.text_bytes, {0xC3});
     } else if (mnemonic == "cqto") {
       emit_bytes(module.text_bytes, {0x48, 0x99});
+    } else if (mnemonic == "nop") {
+      emit_bytes(module.text_bytes, {0x90});
+    } else if (mnemonic == "int3") {
+      emit_bytes(module.text_bytes, {0xCC});
+    } else if (mnemonic == "syscall") {
+      emit_bytes(module.text_bytes, {0x0F, 0x05});
+    } else if (mnemonic == "pause") {
+      emit_bytes(module.text_bytes, {0xF3, 0x90});
+    } else if (mnemonic == "ud2") {
+      emit_bytes(module.text_bytes, {0x0F, 0x0B});
+    } else if (mnemonic == "clc") {
+      emit_bytes(module.text_bytes, {0xF8});
+    } else if (mnemonic == "stc") {
+      emit_bytes(module.text_bytes, {0xF9});
+    } else if (mnemonic == "cld") {
+      emit_bytes(module.text_bytes, {0xFC});
+    } else if (mnemonic == "std") {
+      emit_bytes(module.text_bytes, {0xFD});
+    } else if (mnemonic == "hlt") {
+      emit_bytes(module.text_bytes, {0xF4});
     }
     // 3. movzbq %al, %rax
     else if (mnemonic == "movzbq" && ops.size() == 2) {

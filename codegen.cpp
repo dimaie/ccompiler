@@ -149,3 +149,7 @@ void ICodeGenerator::visit(const MemberAccessNode &node) {
   unsupported(node, node.is_arrow ? "arrow member access" : "dot member access");
 }
 
+void ICodeGenerator::visit(const AsmStmtNode &node) {
+  unsupported(node, "inline assembly");
+}
+

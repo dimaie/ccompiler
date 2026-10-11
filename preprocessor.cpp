@@ -110,7 +110,25 @@ std::string Preprocessor::resolve_include_path(const std::string &header, bool i
     }
   }
 
-  // Check virtual headers (e.g. stdio.h)
+  // Check default include directories: ./include, ../include, and relative to current file
+  std::vector<std::string> default_dirs = {
+      "include",
+      "../include",
+      "../../include"
+  };
+  if (!current_file_dir.empty()) {
+    default_dirs.push_back((std::filesystem::path(current_file_dir) / "include").string());
+    default_dirs.push_back((std::filesystem::path(current_file_dir) / "../include").string());
+  }
+
+  for (const auto &dir : default_dirs) {
+    std::filesystem::path p = std::filesystem::path(dir) / header;
+    if (std::filesystem::exists(p)) {
+      return p.string();
+    }
+  }
+
+  // Check virtual headers fallback (guarantees standalone operation if include folder missing)
   auto vit = virtual_headers_.find(header);
   if (vit != virtual_headers_.end()) {
     return "__virtual__:" + header;

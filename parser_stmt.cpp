@@ -204,6 +204,9 @@ std::unique_ptr<ASTNode> Parser::parse_statement() {
     expect(TOK_SEMICOLON, "Expected ';'");
     return nullptr;
   }
+  if (t.type == TOK_KW_ASM) {
+    return parse_asm();
+  }
   if (t.type == TOK_KW_IF) {
     return parse_if();
   }
@@ -217,6 +220,47 @@ std::unique_ptr<ASTNode> Parser::parse_statement() {
   auto expr = parse_expr();
   expect(TOK_SEMICOLON, "Expected ';' after expression");
   return expr;
+}
+
+std::unique_ptr<AsmStmtNode> Parser::parse_asm() {
+  Token asm_tok = expect(TOK_KW_ASM, "Expected 'asm'");
+  bool is_volatile = false;
+  if (match(TOK_KW_VOLATILE)) {
+    is_volatile = true;
+  }
+
+  expect(TOK_LPAREN, "Expected '(' after asm");
+  Token s_tok = expect(TOK_STRING_LIT, "Expected string literal in asm statement");
+  std::string asm_code = s_tok.text;
+
+  // Support string concatenation: asm("line 1\n" "line 2\n")
+  while (peek().type == TOK_STRING_LIT) {
+    Token next_str = expect(TOK_STRING_LIT, "Expected string literal");
+    asm_code += "\n";
+    asm_code += next_str.text;
+  }
+
+  // Support optional extended asm operands (: output : input : clobbers) by skipping to ')'
+  int paren_depth = 0;
+  while (peek().type != TOK_EOF) {
+    if (peek().type == TOK_LPAREN) {
+      paren_depth++;
+      lexer_->next();
+    } else if (peek().type == TOK_RPAREN) {
+      if (paren_depth > 0) {
+        paren_depth--;
+        lexer_->next();
+      } else {
+        break; // Reached matching closing ')'
+      }
+    } else {
+      lexer_->next();
+    }
+  }
+
+  expect(TOK_RPAREN, "Expected ')' after asm code");
+  expect(TOK_SEMICOLON, "Expected ';' after asm statement");
+  return std::make_unique<AsmStmtNode>(asm_tok.line, asm_code, is_volatile);
 }
 
 std::unique_ptr<ProgramNode> Parser::parse_program() {

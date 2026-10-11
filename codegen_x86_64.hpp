@@ -41,6 +41,7 @@ public:
   void visit(const IdentifierNode &node) override;
   void visit(const StructDefNode &node) override;
   void visit(const MemberAccessNode &node) override;
+  void visit(const AsmStmtNode &node) override;
 
   struct MemberInfo {
     std::string name;

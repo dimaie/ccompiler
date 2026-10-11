@@ -522,4 +522,16 @@ void CCodeGenerator::visit(const MemberAccessNode &node) {
   *out_ << node.member;
 }
 
+void CCodeGenerator::visit(const AsmStmtNode &node) {
+  *out_ << "__asm__(\"";
+  for (char c : node.asm_code) {
+    if (c == '"') *out_ << "\\\"";
+    else if (c == '\\') *out_ << "\\\\";
+    else if (c == '\n') *out_ << "\\n";
+    else if (c == '\t') *out_ << "\\t";
+    else *out_ << c;
+  }
+  *out_ << "\");\n";
+}
+
 

@@ -1168,6 +1168,75 @@ static void test_assembler_linker() {
   }
 }
 
+static void test_inline_asm_codegen() {
+  std::cout << "Testing Inline Assembly Codegen...\n";
+
+  // 1. x86_64 inline assembly
+  {
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse("int main() {\n"
+                      "  __asm__ volatile (\"nop\");\n"
+                      "  return 0;\n"
+                      "}\n");
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("nop") != std::string::npos);
+  }
+
+  // 2. ARM64 inline assembly
+  {
+    auto gen = CodeGeneratorFactory::create("arm64");
+    auto prog = parse("int main() {\n"
+                      "  asm(\"nop\");\n"
+                      "  return 0;\n"
+                      "}\n");
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("nop") != std::string::npos);
+  }
+
+  // 3. AVR inline assembly
+  {
+    auto gen = CodeGeneratorFactory::create("avr");
+    auto prog = parse("int main() {\n"
+                      "  asm(\"nop\");\n"
+                      "  return 0;\n"
+                      "}\n");
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find("nop") != std::string::npos);
+  }
+
+  // 4. C backend inline assembly
+  {
+    auto gen = CodeGeneratorFactory::create("c");
+    auto prog = parse("int main() {\n"
+                      "  asm(\"nop\");\n"
+                      "  return 0;\n"
+                      "}\n");
+    std::string c_code = gen->generate_to_string(*prog);
+    assert(c_code.find("__asm__(\"nop\");") != std::string::npos);
+  }
+
+  // 5. Execution of inline assembly on x86_64
+  {
+    auto x86_linker = AssemblerLinkerFactory::create("x86_64");
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse("int main() {\n"
+                      "  __asm__(\"nop\");\n"
+                      "  return 0;\n"
+                      "}\n");
+    std::string asm_code = gen->generate_to_string(*prog);
+    std::string exe_path = "test_asm_exe.exe";
+    auto res = x86_linker->assemble_and_link(asm_code, exe_path);
+    assert(res.success);
+    assert(std::filesystem::exists(exe_path));
+
+    int code = std::system(".\\test_asm_exe.exe");
+    assert(code == 0);
+
+    std::error_code ec;
+    std::filesystem::remove(exe_path, ec);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Code Generator Test Suite\n";
@@ -1188,9 +1257,10 @@ int main() {
   test_code_review_fixes();
   test_char_and_string_literals_codegen();
   test_assembler_linker();
+  test_inline_asm_codegen();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL CODEGEN TESTS PASSED! (15/15)\n";
+  std::cout << "  ALL CODEGEN TESTS PASSED! (16/16)\n";
   std::cout << "========================================\n";
   return 0;
 }

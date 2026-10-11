@@ -1052,3 +1052,18 @@ void ARM64CodeGenerator::visit(const MemberAccessNode &node) {
     }
   }
 }
+
+void ARM64CodeGenerator::visit(const AsmStmtNode &node) {
+  std::istringstream stream(node.asm_code);
+  std::string line;
+  while (std::getline(stream, line)) {
+    size_t start = line.find_first_not_of(" \t\r\n");
+    if (start != std::string::npos) {
+      size_t end = line.find_last_not_of(" \t\r\n");
+      std::string trimmed = line.substr(start, end - start + 1);
+      if (!trimmed.empty()) {
+        emit_line(trimmed);
+      }
+    }
+  }
+}

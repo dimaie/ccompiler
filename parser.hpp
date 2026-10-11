@@ -32,6 +32,7 @@ public:
   std::unique_ptr<GotoNode> parse_goto();
   std::unique_ptr<ReturnNode> parse_return();
   std::unique_ptr<CompoundNode> parse_compound_statement();
+  std::unique_ptr<AsmStmtNode> parse_asm();
 
   // Declarations (implemented in parser_decl.cpp)
   bool is_type_specifier(TokenType type) const;
