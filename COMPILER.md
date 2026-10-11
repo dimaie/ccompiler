@@ -90,8 +90,9 @@ The codebase is organized into cleanly decoupled directories:
 2. **Intermediate Representation (Middle-End Stage)**:
    - Eliminates direct $M \times N$ AST-to-text duplication across backends.
    - Lowers high-level control structures (`if`, `for`, `while`, `do-while`, `switch`), short-circuit operators (`&&`, `||`), and expressions into a standardized linear Three-Address Code (TAC) representation with explicit control-flow labels.
-3. **Machine Description Layer (`TargetInfo`)**:
+3. **Machine Description Layer (`TargetInfo`) & Storage Modes**:
    - Replaces magic numbers scattered across backends. Encapsulates integer widths, pointer sizes, alignment, and endianness per architecture (`AVR` uses 16-bit pointers and integers; `x86_64` and `ARM64` use 64-bit pointers and 32-bit integers).
+   - Encapsulates local variable storage configuration (`LocalVarStorage::Stack` vs `LocalVarStorage::Memory`), allowing the middle-end IR to lower variables explicitly into stack frame registers or static SRAM memory locations.
 4. **Multi-Compilation Unit Architecture**:
    - Compiles multiple source files within a single execution.
    - Merges `.text` and `.data` sections with 16-byte alignment.
@@ -134,14 +135,17 @@ The codebase is organized into cleanly decoupled directories:
 ### Middle-End & Intermediate Representation (`src/ir/`)
 
 - **Target Information (`target_info.hpp`)**:
-  - `TargetInfo::get(TargetArch)` and `TargetInfo::from_string(arch_name)`.
+  - `TargetInfo::get(TargetArch)` and `TargetInfo::from_string(arch_name, local_var_storage)`.
   - Defines `char_size`, `short_size`, `int_size`, `long_size`, `pointer_size`, `is_64bit`, and `is_little_endian`.
+  - Resolves `get_effective_local_var_storage()` (`LocalVarStorage::Memory` for AVR by default, `LocalVarStorage::Stack` for 64-bit platforms).
 - **Three-Address Code IR (`ir.hpp`, `ir.cpp`)**:
   - `IROpKind`: Operations covering `Assign`, `Add`, `Sub`, `Mul`, `Div`, `Mod`, `Neg`, `BitAnd`, `BitOr`, `BitXor`, `BitNot`, `Shl`, `Shr`, `Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge`, `Load`, `Store`, `Alloca`, `Gep`, `Branch`, `BranchIf`, `Jump`, `Label`, `Call`, `Return`, `InlineAsm`.
-  - `IROperand`: Strongly typed operands (`Constant`, `Variable`, `Temp` virtual register, `Label`, `Function`).
-  - `IRFunction` & `IRModule`: Encapsulate lowered instructions, variables, parameters, and provide pretty-printing via `print()`.
-- **IR Builder (`ir_builder.hpp`, `ir_builder.cpp`)**:
-  - Traverses the AST and emits linear IR instructions.
+  - `IROperand`: Strongly typed operands (`Constant`, `Variable`, `Temp` virtual register, `Label`, `Global`).
+  - `IRFunction` & `IRModule`: Encapsulate lowered instructions, variables, parameters, and global variable allocations (`global_vars`).
+- **Storage-Aware IR Builder (`ir_builder.hpp`, `ir_builder.cpp`)**:
+  - Lowers AST into TAC IR based on the target's storage model:
+    - **`stack` mode**: Local variables are allocated as function-local temporaries/registers (`%v0`).
+    - **`memory` mode**: Local variables are allocated in static module memory (`global @_static_<func>_<var> : N bytes`). Variable updates emit `store @_static_...` and variable accesses emit `load @_static_...`.
   - Generates unique temporary registers (`%v0`, `%v1`, ...) and basic block labels (`.if_then_N`, `.while_start_N`, etc.).
   - Implements short-circuit evaluation for `&&` and `||`.
   - Lowers `switch` statements into condition-and-jump dispatch tables.
@@ -158,8 +162,9 @@ The codebase is organized into cleanly decoupled directories:
   - `Memory`: Static SRAM variable allocations (crucial for 8-bit AVR microcontrollers with limited hardware stack).
   - `Auto`: Resolves to `Memory` for AVR, `Stack` for 64-bit architectures.
 
-### Internal Assembler & PE Linker (`src/backend/`)
+### Internal Assemblers & Linkers (`src/backend/`)
 
+#### 1. x86_64 Internal Assembler & PE Linker
 - **Internal Assembler (`internal_assembler.hpp`, `internal_assembler.cpp`)**:
   - Line-by-line parser for AT&T syntax x86-64 assembly.
   - Directives: `.globl`, `.local`, `.section .text`, `.section .data`, `.section .rdata`, `.section .rodata`, `.asciz`, `.string`, `.quad`, `.long`, `.word`, `.byte`, `.space`, `.align`.
@@ -167,13 +172,26 @@ The codebase is organized into cleanly decoupled directories:
   - Emits `AssembledModule` containing raw section buffers, symbol offsets, and relocation records.
 - **Embedded PE Linker (`internal_pe_linker.hpp`, `internal_pe_linker.cpp`)**:
   - Links one or more `AssembledModule` objects into a standalone Windows PE32+ (64-bit) executable or DLL.
-  - Sections:
-    - `.text`: Machine code.
-    - `.rdata`: Read-only constants, string literals, Import Directory Table, Import Lookup Table (ILT), Import Address Table (IAT).
-    - `.data`: Initialized global variables.
-  - Resolves internal relocations (`IMAGE_REL_AMD64_REL32`, `IMAGE_REL_AMD64_ADDR64`).
-  - Cross-module resolution: Resolves missing symbols across input modules.
-  - DLL Import Resolution: Automatically detects unresolved functions (e.g. `puts`, `ExitProcess`, `MessageBoxA`) and matches them to standard import DLLs (`kernel32.dll`, `msvcrt.dll`, `user32.dll`), or explicit `--import` definitions.
+  - Sections: `.text` (code), `.rdata` (constants, imports, ILT, IAT), `.data` (initialized globals).
+  - Resolves internal relocations (`IMAGE_REL_AMD64_REL32`, `IMAGE_REL_AMD64_ADDR64`), cross-module symbols, and DLL imports (`kernel32`, `msvcrt`, `user32`).
+
+#### 2. AVR Assembler & Intel HEX Linker
+- **AVR Assembler (`avr_assembler.hpp`, `avr_assembler.cpp`)**:
+  - Encodes 8-bit AVR / ATmega328P RISC instructions into 16-bit and 32-bit Flash words:
+    - Control flow: `rjmp`, `rcall`, `jmp`, `call`, `ret`, `reti`, `breq`, `brne`, `brlt`, `brge`, `brcs`, `brcc`.
+    - Data transfer: `ldi`, `mov`, `movw`, `in`, `out`, `lds`, `sts`, `ld`, `st`, `ldd`, `std`, `push`, `pop`.
+    - Arithmetic & logic: `add`, `adc`, `sub`, `sbc`, `subi`, `sbci`, `adiw`, `sbiw`, `and`, `andi`, `or`, `ori`, `eor`, `clr`, `com`, `neg`, `inc`, `dec`, `cp`, `cpc`, `cpi`.
+    - Bit/IO instructions: `sbi`, `cbi`, `sbic`, `sbis`, `cli`, `sei`, `nop`.
+  - Directives: `.global`, `.local`, `.section .text/.data/.bss`, `.byte`, `.word`, `.zero`, `.space`.
+  - Emits `AVRAssembledModule` with Flash bytes, SRAM data/bss sizes, and relocations.
+- **AVR Linker (`avr_linker.hpp`, `avr_linker.cpp`)**:
+  - Target: **ATmega328P / Arduino Uno**.
+  - Adds bare-metal CRT0 runtime:
+    - Flash address `0x0000`: Reset vector (`jmp __init`).
+    - `__init`: disables interrupts, clears `r1` (zero register), initializes stack pointer to `RAMEND` (`0x08FF`), and calls `main`.
+  - Merges multiple modules with 2-byte word alignment and cross-module symbol resolution.
+  - Relocates program memory word addresses (`pm_lo8`, `pm_hi8`, relative branch/jump offsets) and SRAM data addresses (`0x0100` base).
+  - Emits an **Intel HEX (`.hex`)** flash image file ready for programming with `avrdude`.
 
 ### Driver & Configuration (`src/driver/`)
 
@@ -318,7 +336,9 @@ Usage: c_compiler [options] <source_files...> [libraries...]
   - `r26:r27` (`X` register), `r30:r31` (`Z` register): Memory pointers.
 - **Storage Modes**:
   - Supports `--local-vars memory` for static SRAM allocations (default) and `--local-vars stack` for re-entrant frames.
-- **Output**: AVR-GCC / GNU `as` compatible assembly text.
+- **Binary & Firmware Emission**:
+  - Direct Intel HEX (`.hex`) flash images via built-in assembler and linker, ready for flashing to Arduino Uno via `avrdude`.
+  - GNU `as` compatible assembly text output (`-S`).
 
 ### C Transpiler
 

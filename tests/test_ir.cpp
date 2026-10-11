@@ -142,6 +142,50 @@ static void test_ir_pretty_printing() {
   assert(output.find("ret") != std::string::npos);
 }
 
+static void test_ir_local_var_storage_modes() {
+  std::cout << "Testing IR Local Variable Storage Modes (Stack vs Memory)...\n";
+
+  auto prog = parse("int main() {\n"
+                    "  int x = 42;\n"
+                    "  x = x + 1;\n"
+                    "  return x;\n"
+                    "}\n");
+
+  // 1. Stack mode (e.g. x86_64 default, or explicit --local-vars stack)
+  {
+    TargetInfo stack_target = TargetInfo::from_string("x86_64", LocalVarStorage::Stack);
+    assert(!stack_target.is_memory_mode());
+    IRBuilder builder(stack_target);
+    IRModule mod = builder.build(*prog);
+
+    assert(mod.global_vars.empty()); // No static SRAM variables
+    std::ostringstream ss;
+    mod.print(ss);
+    std::string out = ss.str();
+    assert(out.find("global @_static_main_x") == std::string::npos);
+    assert(out.find("ret") != std::string::npos);
+  }
+
+  // 2. Memory mode (e.g. AVR default, or explicit --local-vars memory)
+  {
+    TargetInfo mem_target = TargetInfo::from_string("avr", LocalVarStorage::Memory);
+    assert(mem_target.is_memory_mode());
+    IRBuilder builder(mem_target);
+    IRModule mod = builder.build(*prog);
+
+    assert(!mod.global_vars.empty());
+    assert(mod.global_vars[0].first == "_static_main_x");
+    assert(mod.global_vars[0].second == 2); // 16-bit int on AVR = 2 bytes
+
+    std::ostringstream ss;
+    mod.print(ss);
+    std::string out = ss.str();
+    assert(out.find("global @_static_main_x : 2 bytes") != std::string::npos);
+    assert(out.find("store @_static_main_x") != std::string::npos);
+    assert(out.find("load @_static_main_x") != std::string::npos);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Intermediate Stage (IR) Tests\n";
@@ -152,6 +196,7 @@ int main() {
   test_ir_control_flow_lowering();
   test_ir_short_circuit_lowering();
   test_ir_pretty_printing();
+  test_ir_local_var_storage_modes();
 
   std::cout << "========================================\n";
   std::cout << "  ALL IR TESTS PASSED!\n";

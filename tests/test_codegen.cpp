@@ -1147,11 +1147,35 @@ static void test_assembler_linker() {
 
     auto avr_linker = AssemblerLinkerFactory::create("avr");
     assert(avr_linker != nullptr);
-    assert(avr_linker->is_supported() == false);
+    assert(avr_linker->is_supported() == true);
 
     auto c_linker = AssemblerLinkerFactory::create("c");
     assert(c_linker != nullptr);
     assert(c_linker->is_supported() == false);
+  }
+
+  // 1b. AVR Assembler and Linker: produce Intel HEX file
+  {
+    auto avr_linker = AssemblerLinkerFactory::create("avr");
+    auto avr_gen = CodeGeneratorFactory::create("avr");
+    auto prog = parse("int main() {\n"
+                      "  int x = 42;\n"
+                      "  return x + 1;\n"
+                      "}\n");
+    std::string asm_code = avr_gen->generate_to_string(*prog);
+    std::string hex_path = "test_avr_output.hex";
+    auto res = avr_linker->assemble_and_link(asm_code, hex_path);
+    assert(res.success);
+    assert(std::filesystem::exists(hex_path));
+
+    std::ifstream hex_file(hex_path);
+    std::string first_line;
+    std::getline(hex_file, first_line);
+    assert(!first_line.empty() && first_line[0] == ':'); // Valid Intel HEX start
+    hex_file.close();
+
+    std::error_code ec;
+    std::filesystem::remove(hex_path, ec);
   }
 
   // 2. Stub linker behavior

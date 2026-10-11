@@ -73,6 +73,31 @@ private:
 };
 
 /**
+ * @brief Embedded assembler and linker implementation for the AVR target.
+ * Produces standalone Intel HEX (.hex) flash images for Arduino Uno / ATmega328P.
+ */
+class AVRAssemblerLinker : public IAssemblerLinker {
+public:
+  TargetArch get_arch() const override { return TargetArch::AVR; }
+  const char *get_arch_name() const override { return "avr"; }
+  bool is_supported() const override { return true; }
+
+  AssemblerLinkerResult link_modules(
+      const std::vector<AssembledModule> &modules,
+      const std::string &output_filepath,
+      TargetFileType target_file_type = TargetFileType::Auto) override;
+
+  AssemblerLinkerResult assemble_and_link_multiple(
+      const std::vector<std::string> &assembly_codes,
+      const std::string &output_filepath,
+      TargetFileType target_file_type = TargetFileType::Auto) override;
+
+  AssemblerLinkerResult assemble_and_link(
+      const std::string &assembly_code,
+      const std::string &output_filepath) override;
+};
+
+/**
  * @brief Stub assembler and linker for architectures where binary generation
  * is not yet available.
  */

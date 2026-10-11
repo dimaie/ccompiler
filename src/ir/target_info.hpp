@@ -7,6 +7,7 @@
 struct TargetInfo {
   TargetArch arch{TargetArch::X86_64};
   std::string name{"x86_64"};
+  LocalVarStorage local_var_storage{LocalVarStorage::Auto};
 
   int char_size{1};
   int short_size{2};
@@ -16,6 +17,17 @@ struct TargetInfo {
 
   bool is_64bit{true};
   bool is_little_endian{true};
+
+  LocalVarStorage get_effective_local_var_storage() const {
+    if (local_var_storage == LocalVarStorage::Auto) {
+      return (arch == TargetArch::AVR) ? LocalVarStorage::Memory : LocalVarStorage::Stack;
+    }
+    return local_var_storage;
+  }
+
+  bool is_memory_mode() const {
+    return get_effective_local_var_storage() == LocalVarStorage::Memory;
+  }
 
   int get_type_size(DataType type) const {
     switch (type) {
@@ -65,24 +77,25 @@ struct TargetInfo {
     return info;
   }
 
-  static TargetInfo from_string(const std::string &arch_name) {
+  static TargetInfo from_string(const std::string &arch_name, LocalVarStorage storage = LocalVarStorage::Auto) {
     std::string lower = arch_name;
     for (char &c : lower) {
       if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
     }
+    TargetInfo info;
     if (lower == "x86" || lower == "x86_64" || lower == "x86-64" || lower == "amd64") {
-      return get(TargetArch::X86_64);
+      info = get(TargetArch::X86_64);
+    } else if (lower == "avr" || lower == "arduino" || lower == "atmega328p") {
+      info = get(TargetArch::AVR);
+    } else if (lower == "arm" || lower == "arm64" || lower == "aarch64" || lower == "rpi" || lower == "raspberrypi") {
+      info = get(TargetArch::ARM64);
+    } else if (lower == "c" || lower == "c_transpiler") {
+      info = get(TargetArch::C_Transpiler);
+    } else {
+      info = get(TargetArch::X86_64);
     }
-    if (lower == "avr" || lower == "arduino" || lower == "atmega328p") {
-      return get(TargetArch::AVR);
-    }
-    if (lower == "arm" || lower == "arm64" || lower == "aarch64" || lower == "rpi" || lower == "raspberrypi") {
-      return get(TargetArch::ARM64);
-    }
-    if (lower == "c" || lower == "c_transpiler") {
-      return get(TargetArch::C_Transpiler);
-    }
-    return get(TargetArch::X86_64);
+    info.local_var_storage = storage;
+    return info;
   }
 };
 

@@ -41,6 +41,8 @@ set(BACKEND_SOURCES
     src/backend/codegen_c.cpp
     src/backend/internal_assembler.cpp
     src/backend/internal_pe_linker.cpp
+    src/backend/avr_assembler.cpp
+    src/backend/avr_linker.cpp
     src/backend/assembler_linker.cpp
 )
 

@@ -94,6 +94,61 @@ AssemblerLinkerResult StubAssemblerLinker::assemble_and_link(
   return assemble_and_link_multiple({assembly_code}, output_filepath, TargetFileType::Auto);
 }
 
+AssemblerLinkerResult AVRAssemblerLinker::link_modules(
+    const std::vector<AssembledModule> &/*modules*/,
+    const std::string &/*output_filepath*/,
+    TargetFileType /*target_file_type*/) {
+  AssemblerLinkerResult result;
+  result.success = false;
+  result.exit_code = 1;
+  result.message = "AVR linking requires AVR assembly modules. Use assemble_and_link_multiple.";
+  return result;
+}
+
+#include "avr_assembler.hpp"
+#include "avr_linker.hpp"
+
+AssemblerLinkerResult AVRAssemblerLinker::assemble_and_link_multiple(
+    const std::vector<std::string> &assembly_codes,
+    const std::string &output_filepath,
+    TargetFileType /*target_file_type*/) {
+  AssemblerLinkerResult result;
+  try {
+    AVRAssembler assembler;
+    std::vector<AVRAssembledModule> modules;
+    modules.reserve(assembly_codes.size());
+    for (const auto &code : assembly_codes) {
+      modules.push_back(assembler.assemble(code));
+    }
+
+    std::string err;
+    bool ok = AVRLinker::link(modules, output_filepath, err, true);
+    if (!ok) {
+      result.success = false;
+      result.exit_code = 1;
+      result.message = "AVR linker error: " + err;
+      return result;
+    }
+
+    result.success = true;
+    result.exit_code = 0;
+    result.output_path = output_filepath;
+    result.message = "Successfully assembled and linked AVR firmware image (.hex).";
+    return result;
+  } catch (const std::exception &e) {
+    result.success = false;
+    result.exit_code = 1;
+    result.message = std::string("AVR assembler error: ") + e.what();
+    return result;
+  }
+}
+
+AssemblerLinkerResult AVRAssemblerLinker::assemble_and_link(
+    const std::string &assembly_code,
+    const std::string &output_filepath) {
+  return assemble_and_link_multiple({assembly_code}, output_filepath, TargetFileType::Auto);
+}
+
 std::unique_ptr<IAssemblerLinker>
 AssemblerLinkerFactory::create(TargetArch arch) {
   switch (arch) {
@@ -102,7 +157,7 @@ AssemblerLinkerFactory::create(TargetArch arch) {
   case TargetArch::ARM64:
     return std::make_unique<StubAssemblerLinker>(TargetArch::ARM64, "arm64");
   case TargetArch::AVR:
-    return std::make_unique<StubAssemblerLinker>(TargetArch::AVR, "avr");
+    return std::make_unique<AVRAssemblerLinker>();
   case TargetArch::C_Transpiler:
     return std::make_unique<StubAssemblerLinker>(TargetArch::C_Transpiler, "c");
   default:

@@ -53,8 +53,15 @@ private:
 
   IROperand last_expr_operand_{IROperand::none()};
 
-  // Variable tracking: symbol name -> virtual register
-  std::unordered_map<std::string, IROperand> var_table_;
+  struct VarInfo {
+    IROperand op;
+    bool is_memory{false};
+    bool is_array{false};
+    int size{0};
+  };
+
+  // Variable tracking: symbol name -> VarInfo
+  std::unordered_map<std::string, VarInfo> var_table_;
 
   // Break / continue label stacks
   std::vector<std::string> break_labels_;

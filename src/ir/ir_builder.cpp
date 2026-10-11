@@ -106,7 +106,7 @@ void IRBuilder::visit(const FuncDefNode &node) {
   for (const auto &param : node.params) {
     IROperand param_var = new_var();
     fn.params.push_back(param_var);
-    var_table_[param.name] = param_var;
+    var_table_[param.name] = {param_var, false, false, 0};
   }
 
   node.body->accept(*this);
@@ -136,17 +136,37 @@ void IRBuilder::visit(const CompoundNode &node) {
 }
 
 void IRBuilder::visit(const VarDeclNode &node) {
-  IROperand var_op = new_var();
-  var_table_[node.name] = var_op;
+  if (target_info_.is_memory_mode()) {
+    std::string static_sym = "_static_" + (current_func_ ? current_func_->name : "global") + "_" + node.name;
+    int elem_sz = node.pointer_level > 0 ? target_info_.pointer_size : target_info_.get_type_size(node.data_type);
+    int sz = node.is_array ? (node.array_size > 0 ? node.array_size * elem_sz : elem_sz) : elem_sz;
+    module_.global_vars.push_back({static_sym, sz});
 
-  if (node.init) {
-    IROperand init_op = lower_expression(*node.init);
-    IRInstruction copy_inst;
-    copy_inst.op = IROpKind::Copy;
-    copy_inst.dst = var_op;
-    copy_inst.src1 = init_op;
-    copy_inst.comment = "var " + node.name;
-    emit_instruction(copy_inst);
+    IROperand var_op = IROperand::global(static_sym);
+    var_table_[node.name] = {var_op, true, node.is_array, sz};
+
+    if (node.init) {
+      IROperand init_op = lower_expression(*node.init);
+      IRInstruction store_inst;
+      store_inst.op = IROpKind::Store;
+      store_inst.dst = var_op;
+      store_inst.src1 = init_op;
+      store_inst.comment = "var " + node.name + " (static memory)";
+      emit_instruction(store_inst);
+    }
+  } else {
+    IROperand var_op = new_var();
+    var_table_[node.name] = {var_op, false, node.is_array, 0};
+
+    if (node.init) {
+      IROperand init_op = lower_expression(*node.init);
+      IRInstruction copy_inst;
+      copy_inst.op = IROpKind::Copy;
+      copy_inst.dst = var_op;
+      copy_inst.src1 = init_op;
+      copy_inst.comment = "var " + node.name;
+      emit_instruction(copy_inst);
+    }
   }
 }
 
@@ -172,7 +192,22 @@ void IRBuilder::visit(const StringLitNode &node) {
 void IRBuilder::visit(const IdentifierNode &node) {
   auto it = var_table_.find(node.name);
   if (it != var_table_.end()) {
-    last_expr_operand_ = it->second;
+    if (it->second.is_memory) {
+      if (it->second.is_array) {
+        last_expr_operand_ = it->second.op;
+      } else {
+        IROperand tmp = new_var();
+        IRInstruction load_inst;
+        load_inst.op = IROpKind::Load;
+        load_inst.dst = tmp;
+        load_inst.src1 = it->second.op;
+        load_inst.comment = "load " + node.name;
+        emit_instruction(load_inst);
+        last_expr_operand_ = tmp;
+      }
+    } else {
+      last_expr_operand_ = it->second.op;
+    }
   } else {
     // Global or function reference
     last_expr_operand_ = IROperand::global(node.name);
@@ -186,12 +221,23 @@ void IRBuilder::visit(const AssignNode &node) {
   if (node.left && node.left->getType() == ASTNodeType::Identifier) {
     const auto *id = static_cast<const IdentifierNode *>(node.left.get());
     auto it = var_table_.find(id->name);
+    if (it != var_table_.end() && it->second.is_memory) {
+      IRInstruction store_inst;
+      store_inst.op = IROpKind::Store;
+      store_inst.dst = it->second.op;
+      store_inst.src1 = rhs;
+      store_inst.comment = "store " + id->name;
+      emit_instruction(store_inst);
+      last_expr_operand_ = rhs;
+      return;
+    }
+
     IROperand dst_op;
     if (it != var_table_.end()) {
-      dst_op = it->second;
+      dst_op = it->second.op;
     } else {
       dst_op = new_var();
-      var_table_[id->name] = dst_op;
+      var_table_[id->name] = {dst_op, false, false, 0};
     }
 
     IRInstruction copy_inst;

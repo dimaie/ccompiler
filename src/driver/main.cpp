@@ -49,9 +49,7 @@ int main(int argc, char *argv[]) {
   }
 
   std::vector<std::string> generated_assembly_list;
-  std::vector<AssembledModule> assembled_modules;
   auto linker = AssemblerLinkerFactory::create(config.general.target);
-  X86_64InternalAssembler internal_assembler;
 
   for (size_t file_idx = 0; file_idx < config.general.input_filenames.size(); ++file_idx) {
     const std::string &input_name = config.general.input_filenames[file_idx];
@@ -107,7 +105,7 @@ int main(int argc, char *argv[]) {
         ast->print(0);
       }
 
-      TargetInfo target_info = TargetInfo::from_string(config.general.target);
+      TargetInfo target_info = TargetInfo::from_string(config.general.target, config.codegen.local_var_storage);
       IRBuilder ir_builder(target_info);
       IRModule ir_mod = ir_builder.build(*ast);
 
@@ -163,10 +161,6 @@ int main(int argc, char *argv[]) {
         }
         continue;
       }
-
-      if (linker->is_supported()) {
-        assembled_modules.push_back(internal_assembler.assemble(asm_str));
-      }
     } catch (const std::exception &e) {
       std::cerr << "Error in '" << input_name << "': " << e.what() << "\n";
       return 1;
@@ -221,18 +215,22 @@ int main(int argc, char *argv[]) {
     return 0;
   }
 
-  // Default executable destination
+  // Default executable / binary destination
   std::string exe_path = config.general.output_filename;
   if (exe_path.empty()) {
+    if (config.general.target == "avr" || config.general.target == "arduino") {
+      exe_path = "a.hex";
+    } else {
 #ifdef _WIN32
-    exe_path = "a.exe";
+      exe_path = "a.exe";
 #else
-    exe_path = "a.out";
+      exe_path = "a.out";
 #endif
+    }
   }
 
   linker->set_linker_config(config.linker);
-  auto link_res = linker->link_modules(assembled_modules, exe_path, config.general.target_file_type);
+  auto link_res = linker->assemble_and_link_multiple(generated_assembly_list, exe_path, config.general.target_file_type);
   if (!link_res.success) {
     std::cerr << "Error: " << link_res.message << "\n";
     return 1;
