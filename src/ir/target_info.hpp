@@ -83,7 +83,8 @@ struct TargetInfo {
       if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
     }
     TargetInfo info;
-    if (lower == "x86" || lower == "x86_64" || lower == "x86-64" || lower == "amd64") {
+    if (lower == "x86" || lower == "x86_64" || lower == "x86-64" || lower == "amd64" ||
+        lower == "linux" || lower == "x86_64-linux" || lower == "elf64" || lower == "elf") {
       info = get(TargetArch::X86_64);
     } else if (lower == "avr" || lower == "arduino" || lower == "atmega328p") {
       info = get(TargetArch::AVR);

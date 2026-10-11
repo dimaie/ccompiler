@@ -16,6 +16,10 @@ include_directories(
     src/frontend
     src/ir
     src/backend
+    src/backend/x86_64
+    src/backend/arm64
+    src/backend/avr
+    src/backend/c
     src/driver
 )
 
@@ -35,15 +39,16 @@ set(IR_SOURCES
 
 set(BACKEND_SOURCES
     src/backend/codegen.cpp
-    src/backend/codegen_x86_64.cpp
-    src/backend/codegen_arm64.cpp
-    src/backend/codegen_avr.cpp
-    src/backend/codegen_c.cpp
-    src/backend/internal_assembler.cpp
-    src/backend/internal_pe_linker.cpp
-    src/backend/avr_assembler.cpp
-    src/backend/avr_linker.cpp
     src/backend/assembler_linker.cpp
+    src/backend/x86_64/codegen_x86_64.cpp
+    src/backend/x86_64/internal_assembler.cpp
+    src/backend/x86_64/internal_pe_linker.cpp
+    src/backend/x86_64/internal_elf_linker.cpp
+    src/backend/arm64/codegen_arm64.cpp
+    src/backend/avr/codegen_avr.cpp
+    src/backend/avr/avr_assembler.cpp
+    src/backend/avr/avr_linker.cpp
+    src/backend/c/codegen_c.cpp
 )
 
 set(DRIVER_SOURCES

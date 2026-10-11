@@ -220,6 +220,9 @@ int main(int argc, char *argv[]) {
   if (exe_path.empty()) {
     if (config.general.target == "avr" || config.general.target == "arduino") {
       exe_path = "a.hex";
+    } else if (config.general.target == "linux" || config.general.target == "x86_64-linux" ||
+               config.general.target == "elf64" || config.general.target == "elf") {
+      exe_path = "a.out";
     } else {
 #ifdef _WIN32
       exe_path = "a.exe";

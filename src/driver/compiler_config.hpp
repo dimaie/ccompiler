@@ -2,7 +2,7 @@
 #define COMPILER_CONFIG_HPP
 
 #include "codegen.hpp"
-#include "internal_pe_linker.hpp"
+#include "x86_64/internal_pe_linker.hpp"
 #include <iostream>
 #include <string>
 #include <vector>

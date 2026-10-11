@@ -1230,6 +1230,36 @@ static void test_assembler_linker() {
     std::error_code ec;
     std::filesystem::remove(exe_path, ec);
   }
+
+  // 5. Embedded Linux ELF linker: hello world and static ELF binary generation
+  {
+    auto linux_linker = AssemblerLinkerFactory::create("linux");
+    assert(linux_linker != nullptr);
+    assert(linux_linker->is_supported());
+    assert(std::string(linux_linker->get_arch_name()) == "linux");
+
+    auto gen = CodeGeneratorFactory::create("linux");
+    auto prog = parse("int main() {\n"
+                      "  puts(\"Testing Linux ELF linking!\");\n"
+                      "  return 0;\n"
+                      "}\n");
+    std::string asm_code = gen->generate_to_string(*prog);
+
+    std::string elf_path = "test_linux_gen.elf";
+    auto res = linux_linker->assemble_and_link(asm_code, elf_path);
+    assert(res.success);
+    assert(std::filesystem::exists(elf_path));
+
+    // Verify ELF magic: 0x7F 'E' 'L' 'F'
+    std::ifstream elf_file(elf_path, std::ios::binary);
+    char magic[4];
+    elf_file.read(magic, 4);
+    assert(magic[0] == 0x7F && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F');
+    elf_file.close();
+
+    std::error_code ec;
+    std::filesystem::remove(elf_path, ec);
+  }
 }
 
 static void test_inline_asm_codegen() {

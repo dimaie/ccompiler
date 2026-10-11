@@ -1,7 +1,6 @@
 #ifndef AVR_ASSEMBLER_HPP
 #define AVR_ASSEMBLER_HPP
 
-#include "internal_assembler.hpp"
 #include <cstdint>
 #include <set>
 #include <string>

@@ -1,8 +1,8 @@
 #include "codegen.hpp"
-#include "codegen_arm64.hpp"
-#include "codegen_avr.hpp"
-#include "codegen_c.hpp"
-#include "codegen_x86_64.hpp"
+#include "arm64/codegen_arm64.hpp"
+#include "avr/codegen_avr.hpp"
+#include "c/codegen_c.hpp"
+#include "x86_64/codegen_x86_64.hpp"
 #include <algorithm>
 #include <stdexcept>
 
@@ -38,7 +38,8 @@ CodeGeneratorFactory::create(const std::string &arch_name, const CodeGenOptions 
                  [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
   if (lower == "x86" || lower == "x86_64" || lower == "x86-64" ||
-      lower == "amd64") {
+      lower == "amd64" || lower == "linux" || lower == "x86_64-linux" ||
+      lower == "elf64" || lower == "elf") {
     return create(TargetArch::X86_64, options);
   }
   if (lower == "avr" || lower == "arduino" || lower == "atmega328p") {

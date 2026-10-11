@@ -1,6 +1,7 @@
 #include "assembler_linker.hpp"
-#include "internal_assembler.hpp"
-#include "internal_pe_linker.hpp"
+#include "x86_64/internal_assembler.hpp"
+#include "x86_64/internal_pe_linker.hpp"
+#include "x86_64/internal_elf_linker.hpp"
 #include <algorithm>
 #include <fstream>
 #include <sstream>
@@ -48,6 +49,54 @@ AssemblerLinkerResult X86_64AssemblerLinker::assemble_and_link_multiple(
 }
 
 AssemblerLinkerResult X86_64AssemblerLinker::assemble_and_link(
+    const std::string &assembly_code,
+    const std::string &output_filepath) {
+  return assemble_and_link_multiple({assembly_code}, output_filepath, TargetFileType::Auto);
+}
+
+AssemblerLinkerResult LinuxAssemblerLinker::link_modules(
+    const std::vector<AssembledModule> &modules,
+    const std::string &output_filepath,
+    TargetFileType target_file_type) {
+  AssemblerLinkerResult result;
+  std::string error_msg;
+  bool success = InternalElfLinker::link(modules, output_filepath, error_msg, config_, target_file_type);
+  if (!success) {
+    result.success = false;
+    result.exit_code = 1;
+    result.message = "Internal ELF linker error: " + error_msg;
+    return result;
+  }
+
+  result.success = true;
+  result.exit_code = 0;
+  result.output_path = output_filepath;
+  result.message = "Successfully assembled and linked Linux ELF executable using embedded toolchain.";
+  return result;
+}
+
+AssemblerLinkerResult LinuxAssemblerLinker::assemble_and_link_multiple(
+    const std::vector<std::string> &assembly_codes,
+    const std::string &output_filepath,
+    TargetFileType target_file_type) {
+  try {
+    X86_64InternalAssembler internal_assembler;
+    std::vector<AssembledModule> modules;
+    modules.reserve(assembly_codes.size());
+    for (const auto &asm_code : assembly_codes) {
+      modules.push_back(internal_assembler.assemble(asm_code));
+    }
+    return link_modules(modules, output_filepath, target_file_type);
+  } catch (const std::exception &e) {
+    AssemblerLinkerResult result;
+    result.success = false;
+    result.exit_code = 1;
+    result.message = std::string("Internal assembler error: ") + e.what();
+    return result;
+  }
+}
+
+AssemblerLinkerResult LinuxAssemblerLinker::assemble_and_link(
     const std::string &assembly_code,
     const std::string &output_filepath) {
   return assemble_and_link_multiple({assembly_code}, output_filepath, TargetFileType::Auto);
@@ -105,8 +154,8 @@ AssemblerLinkerResult AVRAssemblerLinker::link_modules(
   return result;
 }
 
-#include "avr_assembler.hpp"
-#include "avr_linker.hpp"
+#include "avr/avr_assembler.hpp"
+#include "avr/avr_linker.hpp"
 
 AssemblerLinkerResult AVRAssemblerLinker::assemble_and_link_multiple(
     const std::vector<std::string> &assembly_codes,
@@ -153,7 +202,11 @@ std::unique_ptr<IAssemblerLinker>
 AssemblerLinkerFactory::create(TargetArch arch) {
   switch (arch) {
   case TargetArch::X86_64:
+#ifdef _WIN32
     return std::make_unique<X86_64AssemblerLinker>();
+#else
+    return std::make_unique<LinuxAssemblerLinker>();
+#endif
   case TargetArch::ARM64:
     return std::make_unique<StubAssemblerLinker>(TargetArch::ARM64, "arm64");
   case TargetArch::AVR:
@@ -170,6 +223,9 @@ AssemblerLinkerFactory::create(const std::string &arch_name) {
   std::string lower = arch_name;
   std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
 
+  if (lower == "linux" || lower == "x86_64-linux" || lower == "elf64" || lower == "elf") {
+    return std::make_unique<LinuxAssemblerLinker>();
+  }
   if (lower == "x86_64" || lower == "x86" || lower == "x64" ||
       lower == "amd64") {
     return create(TargetArch::X86_64);

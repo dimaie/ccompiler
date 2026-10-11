@@ -15,7 +15,8 @@ struct AssemblerLinkerResult {
   std::string message;
 };
 
-#include "internal_pe_linker.hpp"
+#include "x86_64/internal_pe_linker.hpp"
+#include "x86_64/internal_elf_linker.hpp"
 
 /**
  * @brief Abstract interface for target-specific assembler and linker drivers.
@@ -51,6 +52,35 @@ class X86_64AssemblerLinker : public IAssemblerLinker {
 public:
   TargetArch get_arch() const override { return TargetArch::X86_64; }
   const char *get_arch_name() const override { return "x86_64"; }
+  bool is_supported() const override { return true; }
+  void set_linker_config(const LinkerConfig &config) override { config_ = config; }
+
+  AssemblerLinkerResult link_modules(
+      const std::vector<AssembledModule> &modules,
+      const std::string &output_filepath,
+      TargetFileType target_file_type = TargetFileType::Auto) override;
+
+  AssemblerLinkerResult assemble_and_link_multiple(
+      const std::vector<std::string> &assembly_codes,
+      const std::string &output_filepath,
+      TargetFileType target_file_type = TargetFileType::Auto) override;
+
+  AssemblerLinkerResult assemble_and_link(
+      const std::string &assembly_code,
+      const std::string &output_filepath) override;
+
+private:
+  LinkerConfig config_;
+};
+
+/**
+ * @brief Embedded assembler and linker implementation for Linux / ELF64 target.
+ * Produces standalone static 64-bit ELF executables for Linux (x86_64).
+ */
+class LinuxAssemblerLinker : public IAssemblerLinker {
+public:
+  TargetArch get_arch() const override { return TargetArch::X86_64; }
+  const char *get_arch_name() const override { return "linux"; }
   bool is_supported() const override { return true; }
   void set_linker_config(const LinkerConfig &config) override { config_ = config; }
 

@@ -22,6 +22,7 @@ This document is the authoritative technical reference for **CCompiler**, a ligh
    - [Usage Examples](#usage-examples)
 4. [Target Architectures](#4-target-architectures)
    - [x86_64 (Windows x64 / AMD64)](#x86_64-windows-x64--amd64)
+   - [Linux ELF64 (x86_64)](#linux-elf64-x86_64)
    - [ARM64 / AArch64](#arm64--aarch64)
    - [AVR (8-bit Microcontroller / Arduino)](#avr-8-bit-microcontroller--arduino)
    - [C Transpiler](#c-transpiler)
@@ -79,7 +80,7 @@ The codebase is organized into cleanly decoupled directories:
 | :--- | :--- | :--- |
 | `src/frontend/` | Lexical analysis, preprocessing, recursive-descent parsing, and AST nodes. | `lexer.*`, `parser_*.cpp`, `preprocessor.*`, `ast.hpp` |
 | `src/ir/` | Target-independent 3-Address Code (TAC) IR, lowering engine, and target descriptions. | `ir.*`, `ir_builder.*`, `target_info.hpp` |
-| `src/backend/` | Target-specific assembly codegen, internal x86 assembler, and internal PE/COFF linker. | `codegen_*.cpp`, `internal_assembler.*`, `internal_pe_linker.*`, `assembler_linker.*` |
+| `src/backend/` | Target-specific assembly codegen, assemblers, and linkers organized into per-architecture directories. | `codegen.*`, `assembler_linker.*`, `x86_64/`, `avr/`, `arm64/`, `c/` |
 | `src/driver/` | Configuration state, POSIX/GNU CLI argument parser, and compilation driver. | `compiler_config.*`, `main.cpp` |
 | `tests/` | Unit and integration test suites for parser, code generators, linker, and IR. | `test_parser.cpp`, `test_codegen.cpp`, `test_ir.cpp` |
 
@@ -162,9 +163,12 @@ The codebase is organized into cleanly decoupled directories:
   - `Memory`: Static SRAM variable allocations (crucial for 8-bit AVR microcontrollers with limited hardware stack).
   - `Auto`: Resolves to `Memory` for AVR, `Stack` for 64-bit architectures.
 
-### Internal Assemblers & Linkers (`src/backend/`)
+### Architecture-Specific Backends, Assemblers & Linkers (`src/backend/`)
 
-#### 1. x86_64 Internal Assembler & PE Linker
+#### 1. x86_64 (`src/backend/x86_64/`)
+- **Code Generator (`codegen_x86_64.hpp`, `codegen_x86_64.cpp`)**:
+  - Emits 64-bit AMD64 / Intel 64 assembly in AT&T syntax.
+  - Supports Win64 ABI and SysV AMD64 ABI, stack-frame management, and calling convention modifiers.
 - **Internal Assembler (`internal_assembler.hpp`, `internal_assembler.cpp`)**:
   - Line-by-line parser for AT&T syntax x86-64 assembly.
   - Directives: `.globl`, `.local`, `.section .text`, `.section .data`, `.section .rdata`, `.section .rodata`, `.asciz`, `.string`, `.quad`, `.long`, `.word`, `.byte`, `.space`, `.align`.
@@ -174,8 +178,16 @@ The codebase is organized into cleanly decoupled directories:
   - Links one or more `AssembledModule` objects into a standalone Windows PE32+ (64-bit) executable or DLL.
   - Sections: `.text` (code), `.rdata` (constants, imports, ILT, IAT), `.data` (initialized globals).
   - Resolves internal relocations (`IMAGE_REL_AMD64_REL32`, `IMAGE_REL_AMD64_ADDR64`), cross-module symbols, and DLL imports (`kernel32`, `msvcrt`, `user32`).
+- **Embedded Linux ELF Linker (`internal_elf_linker.hpp`, `internal_elf_linker.cpp`)**:
+  - Links one or more `AssembledModule` objects into a standalone statically-executable Linux ELF64 (`ET_EXEC`) binary.
+  - Generates standard `Elf64_Ehdr`, single `PT_LOAD` `Elf64_Phdr`, and section headers (`.text`, `.rodata`, `.shstrtab`).
+  - Embeds standard Linux SysV ABI CRT startup code (`_start` at `0x401000` entry point).
+  - Supplies built-in syscall-based standard I/O implementations (`puts`, `printf`, `putchar`, `exit`, `write`) with zero external dependencies (no glibc or dynamic linker required).
 
-#### 2. AVR Assembler & Intel HEX Linker
+#### 2. AVR (`src/backend/avr/`)
+- **Code Generator (`codegen_avr.hpp`, `codegen_avr.cpp`)**:
+  - Emits 8-bit AVR RISC instructions targeting the ATmega328P microcontroller (Arduino Uno).
+  - Supports both `--local-vars memory` (static SRAM allocation) and `--local-vars stack` (Y frame pointer).
 - **AVR Assembler (`avr_assembler.hpp`, `avr_assembler.cpp`)**:
   - Encodes 8-bit AVR / ATmega328P RISC instructions into 16-bit and 32-bit Flash words:
     - Control flow: `rjmp`, `rcall`, `jmp`, `call`, `ret`, `reti`, `breq`, `brne`, `brlt`, `brge`, `brcs`, `brcc`.
@@ -192,6 +204,16 @@ The codebase is organized into cleanly decoupled directories:
   - Merges multiple modules with 2-byte word alignment and cross-module symbol resolution.
   - Relocates program memory word addresses (`pm_lo8`, `pm_hi8`, relative branch/jump offsets) and SRAM data addresses (`0x0100` base).
   - Emits an **Intel HEX (`.hex`)** flash image file ready for programming with `avrdude`.
+
+#### 3. ARM64 (`src/backend/arm64/`)
+- **Code Generator (`codegen_arm64.hpp`, `codegen_arm64.cpp`)**:
+  - Generates standard 64-bit ARM AArch64 assembly text adhering to AAPCS64.
+  - Manages hardware-enforced 16-byte stack pointer alignment, Frame Pointer (`x29`), and Link Register (`x30`).
+
+#### 4. C Transpiler (`src/backend/c/`)
+- **Transpiler (`codegen_c.hpp`, `codegen_c.cpp`)**:
+  - Transforms AST structures into standard, portable ANSI C / C99 code.
+  - Used for AST lowering validation, cross-compilation reference, and portability verification.
 
 ### Driver & Configuration (`src/driver/`)
 
@@ -310,6 +332,18 @@ Usage: c_compiler [options] <source_files...> [libraries...]
   - Direct machine code emission via built-in assembler.
   - Generates PE32+ (64-bit Windows) binaries with valid COFF headers, optional header, `.text`, `.rdata`, and `.data` sections, and import tables.
   - Support for `__cdecl`, `__stdcall`, and `__fastcall` function modifier parsing.
+
+### Linux ELF64 (x86_64)
+
+- **Target Identifier**: `linux` (aliases: `x86_64-linux`, `elf64`, `elf`).
+- **Data Model**: LP64 (char: 1 byte, short: 2 bytes, int: 4 bytes, long: 8 bytes, pointer: 8 bytes). Little-endian.
+- **Calling Convention**: System V AMD64 ABI (first 6 arguments in `%rdi`, `%rsi`, `%rdx`, `%rcx`, `%r8`, `%r9`; return value in `%rax`; 16-byte stack alignment).
+- **Executable Generation**:
+  - Direct machine code emission via embedded `X86_64InternalAssembler`.
+  - Links standalone static ELF64 executables via `InternalElfLinker`.
+  - Built-in CRT runtime (`_start` entry point calling `main` and issuing `sys_exit` syscall 60).
+  - Standalone syscall-based I/O implementations (`puts`, `printf`, `putchar`, `exit`, `write`).
+  - Zero external dependencies: produces a fully self-contained static executable running immediately on any Linux distribution (Ubuntu, Alpine, Debian, Arch, WSL2).
 
 ### ARM64 / AArch64
 
