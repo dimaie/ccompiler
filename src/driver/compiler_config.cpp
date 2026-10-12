@@ -119,6 +119,7 @@ void CompilerConfig::print(std::ostream &out) const {
     }
     out << "\n";
   }
+  out << "  Subsystem:      " << (linker.subsystem == WindowsSubsystem::GUI ? "windows (GUI)" : "console (CUI)") << "\n";
   out << "==============================\n";
 }
 
@@ -140,6 +141,8 @@ void CommandLineParser::print_usage(const char *prog_name, std::ostream &out) {
       << "  -D <macro>[=val]       Define preprocessor macro\n"
       << "  -l<lib>                Link against library archive or DLL (e.g. -luser32)\n"
       << "  -L<dir>                Add directory to library search path\n"
+      << "  -mwindows, --subsystem=windows  Create a Windows GUI application (no console attached)\n"
+      << "  -mconsole, --subsystem=console  Create a Windows console application [default]\n"
       << "  -g, -g2, -g3           Generate source debug information (.file/.loc directives) [default: on]\n"
       << "  -g0, --no-debug        Exclude source debug information\n"
       << "  -s, --strip            Omit debug information and strip symbols\n"
@@ -315,6 +318,12 @@ bool CommandLineParser::parse(const std::vector<std::string> &args, CompilerConf
         error_message = e.what();
         return false;
       }
+      if (config.linker.subsystem == WindowsSubsystem::GUI &&
+          (config.general.target_spec.arch != TargetArch::X86_64 ||
+           (config.general.target_spec.os != TargetOS::Windows && config.general.target_spec.os != TargetOS::None))) {
+        error_message = "Option '-mwindows' is only supported for Windows x86_64 targets";
+        return false;
+      }
       continue;
     }
 
@@ -416,6 +425,49 @@ bool CommandLineParser::parse(const std::vector<std::string> &args, CompilerConf
         }
       } else {
         error_message = "Invalid format for --import. Expected <dll:symbol> or <symbol=dll>";
+        return false;
+      }
+      continue;
+    }
+
+    // Windows Subsystem flags: -mwindows, -mconsole, --subsystem=windows/console/gui/cui
+    if (arg == "-mwindows") {
+      if (config.general.target_spec.arch != TargetArch::X86_64 ||
+          (config.general.target_spec.os != TargetOS::Windows && config.general.target_spec.os != TargetOS::None)) {
+        error_message = "Option '-mwindows' is only supported for Windows x86_64 targets";
+        return false;
+      }
+      config.linker.subsystem = WindowsSubsystem::GUI;
+      continue;
+    }
+    if (arg == "-mconsole") {
+      if (config.general.target_spec.arch != TargetArch::X86_64 ||
+          (config.general.target_spec.os != TargetOS::Windows && config.general.target_spec.os != TargetOS::None)) {
+        error_message = "Option '-mconsole' is only supported for Windows x86_64 targets";
+        return false;
+      }
+      config.linker.subsystem = WindowsSubsystem::Console;
+      continue;
+    }
+    res = match_option(arg, "", "--subsystem", false, args, i, val, err);
+    if (res == MatchResult::MissingValue) {
+      error_message = err;
+      return false;
+    }
+    if (res == MatchResult::Success) {
+      if (config.general.target_spec.arch != TargetArch::X86_64 ||
+          (config.general.target_spec.os != TargetOS::Windows && config.general.target_spec.os != TargetOS::None)) {
+        error_message = "Option '--subsystem' is only supported for Windows x86_64 targets";
+        return false;
+      }
+      std::string val_lower = val;
+      for (char &c : val_lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+      if (val_lower == "windows" || val_lower == "gui") {
+        config.linker.subsystem = WindowsSubsystem::GUI;
+      } else if (val_lower == "console" || val_lower == "cui") {
+        config.linker.subsystem = WindowsSubsystem::Console;
+      } else {
+        error_message = "Invalid value for --subsystem ('" + val + "'). Expected 'windows' or 'console'";
         return false;
       }
       continue;

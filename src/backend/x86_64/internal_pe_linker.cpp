@@ -747,6 +747,7 @@ bool InternalPELinker::link(const std::vector<AssembledModule> &modules,
   FileHeader file_hdr;
 
   OptionalHeader64 opt_hdr;
+  opt_hdr.Subsystem = static_cast<uint16_t>(config.subsystem);
   opt_hdr.SizeOfCode = text_raw_size;
   opt_hdr.SizeOfInitializedData = rdata_raw_size;
   opt_hdr.AddressOfEntryPoint = text_rva + static_cast<uint32_t>(entry_offset);

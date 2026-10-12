@@ -31,6 +31,6 @@ Compile and link against `user32.dll`:
 A complete Win32 window with a static label and an interactive increment button:
 
 ```bash
-./build/c_compiler.exe samples/x86_64/gui_counter.c -luser32 -lkernel32 -o gui_counter.exe
+./build/c_compiler.exe samples/x86_64/gui_counter.c -luser32 -lkernel32 -lgdi32 -o gui_counter.exe
 ./gui_counter.exe
 ```

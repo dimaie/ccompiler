@@ -1820,6 +1820,34 @@ static void test_command_line_parser() {
     assert(cfg_c.general.target_file_type == TargetFileType::ObjectFile);
   }
 
+  // 9. Windows GUI Subsystem flags (-mwindows, -mconsole, --subsystem)
+  {
+    CompilerConfig cfg_win;
+    std::vector<std::string> args = {"-mwindows", "main.c"};
+    bool ok = parser.parse(args, cfg_win, err, help);
+    assert(ok);
+    assert(cfg_win.linker.subsystem == WindowsSubsystem::GUI);
+
+    CompilerConfig cfg_con;
+    std::vector<std::string> args2 = {"--subsystem=console", "main.c"};
+    bool ok2 = parser.parse(args2, cfg_con, err, help);
+    assert(ok2);
+    assert(cfg_con.linker.subsystem == WindowsSubsystem::Console);
+
+    // Reject -mwindows on non-Windows target architectures (e.g. AVR / ARM64 / C)
+    CompilerConfig cfg_avr;
+    std::vector<std::string> args3 = {"-t", "avr", "-mwindows", "main.c"};
+    bool ok3 = parser.parse(args3, cfg_avr, err, help);
+    assert(!ok3);
+    assert(err.find("-mwindows") != std::string::npos || err.find("Windows") != std::string::npos);
+
+    CompilerConfig cfg_arm;
+    std::vector<std::string> args4 = {"-t", "arm64-linux", "--subsystem=windows", "main.c"};
+    bool ok4 = parser.parse(args4, cfg_arm, err, help);
+    assert(!ok4);
+    assert(err.find("--subsystem") != std::string::npos || err.find("Windows") != std::string::npos);
+  }
+
   // 10. Intermediate representation flags (--emit-ir, --ir, --show-ir)
   {
     CompilerConfig cfg_ir;

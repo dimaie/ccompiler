@@ -24,6 +24,11 @@ inline const char *target_file_type_str(TargetFileType t) {
   }
 }
 
+enum class WindowsSubsystem {
+  Console = 3, // IMAGE_SUBSYSTEM_WINDOWS_CUI
+  GUI = 2      // IMAGE_SUBSYSTEM_WINDOWS_GUI
+};
+
 struct LinkerConfig {
   std::vector<std::string> lib_dirs;      // -L<dir>
   std::vector<std::string> lib_files;     // path/to/lib.lib or lib.a
@@ -31,6 +36,7 @@ struct LinkerConfig {
   std::vector<std::string> explicit_dlls; // user32.dll
   std::unordered_map<std::string, std::string> explicit_imports; // symbol -> dll
   bool strip_debug_info{false};
+  WindowsSubsystem subsystem{WindowsSubsystem::Console};
 };
 
 class InternalPELinker {

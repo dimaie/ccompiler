@@ -11,10 +11,13 @@
 #define WM_CREATE           0x0001
 #define WM_DESTROY          0x0002
 #define WM_COMMAND          0x0111
+#define WM_CTLCOLORSTATIC   0x0138
 #define CW_USEDEFAULT       0x80000000
+#define LABEL_BACKGROUND_COLOR 0x00FFFFFF
 
 #define ID_BUTTON_INCREMENT 1001
 #define ID_LABEL_COUNTER    1002
+#define ID_BUTTON_DECREMENT 1003
 
 struct POINT {
     long x;
@@ -67,14 +70,22 @@ void PostQuitMessage(int nExitCode);
 long long DefWindowProcA(void *hWnd, int Msg, long long wParam, long long lParam);
 int SetWindowTextA(void *hWnd, const char *lpString);
 int sprintf(char *str, const char *format, ...);
+long long CreateSolidBrush(long color);
+long long SetBkColor(long long hdc, long color);
+long long SetTextColor(long long hdc, long color);
+int DeleteObject(long long object);
 
 /* Application State */
 static int g_counter = 0;
 static void *g_hLabel = 0;
-static void *g_hButton = 0;
+static void *g_hIncButton = 0;
+static void *g_hDecButton = 0;
+static long long g_hLabelBrush = 0;
 
 long long WndProc(void *hwnd, int msg, long long wParam, long long lParam) {
     if (msg == WM_CREATE) {
+        g_hLabelBrush = CreateSolidBrush(LABEL_BACKGROUND_COLOR);
+
         /* Label Control */
         g_hLabel = CreateWindowExA(
             0, "STATIC", "Count: 0",
@@ -84,20 +95,36 @@ long long WndProc(void *hwnd, int msg, long long wParam, long long lParam) {
         );
 
         /* Button Control */
-        g_hButton = CreateWindowExA(
+        g_hIncButton = CreateWindowExA(
             0, "BUTTON", "Increment",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            75, 80, 150, 35,
+            75, 80, 150, 20,
             hwnd, ID_BUTTON_INCREMENT, 0, 0
+        );
+        g_hDecButton = CreateWindowExA(
+            0, "BUTTON", "Decrement",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            75, 105, 150, 20,
+            hwnd, ID_BUTTON_DECREMENT, 0, 0
         );
         return 0;
     }
 
+    if (msg == WM_CTLCOLORSTATIC && lParam == g_hLabel && g_hLabelBrush != 0) {
+        SetBkColor(wParam, LABEL_BACKGROUND_COLOR);
+        SetTextColor(wParam, 0);
+        return g_hLabelBrush;
+    }
+
     if (msg == WM_COMMAND) {
         int id = wParam & 65535;
-        if (id == ID_BUTTON_INCREMENT || lParam == g_hButton) {
-            char buffer[64];
+        char buffer[64];
+        if (id == ID_BUTTON_INCREMENT || lParam == g_hIncButton) {
             g_counter = g_counter + 1;
+            sprintf(buffer, "Count: %d", g_counter);
+            SetWindowTextA(g_hLabel, buffer);
+        } else if (id == ID_BUTTON_DECREMENT || lParam == g_hDecButton) {
+            g_counter = g_counter - 1;
             sprintf(buffer, "Count: %d", g_counter);
             SetWindowTextA(g_hLabel, buffer);
         }
@@ -105,6 +132,7 @@ long long WndProc(void *hwnd, int msg, long long wParam, long long lParam) {
     }
 
     if (msg == WM_DESTROY) {
+        DeleteObject(g_hLabelBrush);
         PostQuitMessage(0);
         return 0;
     }
