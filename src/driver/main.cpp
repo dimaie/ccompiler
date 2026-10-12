@@ -6,11 +6,26 @@
 #include "parser.hpp"
 #include "preprocessor.hpp"
 #include "target_info.hpp"
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
+
+static std::string format_file_size(uintmax_t bytes) {
+  if (bytes < 1024) {
+    return std::to_string(bytes) + " B";
+  } else if (bytes < 1024 * 1024) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.1f KB", static_cast<double>(bytes) / 1024.0);
+    return std::string(buf);
+  } else {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.1f MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
+    return std::string(buf);
+  }
+}
 
 int main(int argc, char *argv[]) {
   CompilerConfig config;
@@ -51,8 +66,23 @@ int main(int argc, char *argv[]) {
   std::vector<std::string> generated_assembly_list;
   auto linker = AssemblerLinkerFactory::create(config.general.target_spec);
 
-  for (size_t file_idx = 0; file_idx < config.general.input_filenames.size(); ++file_idx) {
+  const bool is_stdout_stream = config.general.output_filename.empty() &&
+      (config.general.stop_phase == StopPhase::PreprocessOnly ||
+       config.general.stop_phase == StopPhase::IROnly ||
+       config.general.stop_phase == StopPhase::AssembleOnly);
+  const bool show_progress = !config.general.quiet && !is_stdout_stream;
+  const size_t total_inputs = config.general.input_filenames.size();
+
+  for (size_t file_idx = 0; file_idx < total_inputs; ++file_idx) {
     const std::string &input_name = config.general.input_filenames[file_idx];
+    if (show_progress) {
+      if (total_inputs > 1) {
+        std::cout << "[" << (file_idx + 1) << "/" << total_inputs << "] Compiling " << input_name << "...\n";
+      } else {
+        std::cout << "Compiling " << input_name << "...\n";
+      }
+    }
+
     std::string code;
     if (input_name == "-") {
       std::stringstream buffer;
@@ -169,15 +199,39 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  if (config.general.stop_phase == StopPhase::PreprocessOnly ||
-      config.general.stop_phase == StopPhase::IROnly ||
-      config.general.stop_phase == StopPhase::AssembleOnly) {
+  if (config.general.stop_phase == StopPhase::PreprocessOnly) {
+    if (show_progress && !config.general.output_filename.empty()) {
+      std::error_code ec;
+      auto sz = std::filesystem::file_size(config.general.output_filename, ec);
+      std::string sz_str = (!ec) ? " (" + format_file_size(sz) + ")" : "";
+      std::cout << "Preprocessed source written to '" << config.general.output_filename << "'" << sz_str << "\n";
+    }
+    return 0;
+  }
+
+  if (config.general.stop_phase == StopPhase::IROnly) {
+    if (show_progress && !config.general.output_filename.empty()) {
+      std::error_code ec;
+      auto sz = std::filesystem::file_size(config.general.output_filename, ec);
+      std::string sz_str = (!ec) ? " (" + format_file_size(sz) + ")" : "";
+      std::cout << "Intermediate representation (IR) written to '" << config.general.output_filename << "'" << sz_str << "\n";
+    }
+    return 0;
+  }
+
+  if (config.general.stop_phase == StopPhase::AssembleOnly) {
+    if (show_progress && !config.general.output_filename.empty()) {
+      std::error_code ec;
+      auto sz = std::filesystem::file_size(config.general.output_filename, ec);
+      std::string sz_str = (!ec) ? " (" + format_file_size(sz) + ")" : "";
+      std::cout << "Assembly code written to '" << config.general.output_filename << "'" << sz_str << "\n";
+    }
     return 0;
   }
 
   if (config.general.stop_phase == StopPhase::CompileOnly) {
-    if (config.general.verbose) {
-      std::cout << "Successfully compiled and assembled "
+    if (show_progress) {
+      std::cout << "Compilation successful: compiled and assembled "
                 << config.general.input_filenames.size() << " translation unit(s).\n";
     }
     return 0;
@@ -207,7 +261,7 @@ int main(int argc, char *argv[]) {
           std::ofstream out_file(fallback_asm);
           if (out_file.is_open()) {
             out_file << generated_assembly_list[i];
-            std::cerr << "Generated output written to '" << fallback_asm << "'.\n";
+            std::cout << "Generated output written to '" << fallback_asm << "'.\n";
           }
         } else if (i < generated_assembly_list.size()) {
           std::cout << generated_assembly_list[i];
@@ -223,11 +277,27 @@ int main(int argc, char *argv[]) {
     exe_path = config.general.target_spec.default_output_filename();
   }
 
+  if (show_progress) {
+    std::string target_desc = config.general.target_spec.to_string();
+    if (config.general.target_spec.arch == TargetArch::X86_64 &&
+        (config.general.target_spec.os == TargetOS::Windows || config.general.target_spec.os == TargetOS::None)) {
+      target_desc += (config.linker.subsystem == WindowsSubsystem::GUI ? " [GUI]" : " [Console]");
+    }
+    std::cout << "Linking '" << exe_path << "' (Target: " << target_desc << ")...\n";
+  }
+
   linker->set_linker_config(config.linker);
   auto link_res = linker->assemble_and_link_multiple(generated_assembly_list, exe_path, config.general.target_file_type);
   if (!link_res.success) {
-    std::cerr << "Error: " << link_res.message << "\n";
+    std::cerr << "Linker error: " << link_res.message << "\n";
     return 1;
+  }
+
+  if (show_progress) {
+    std::error_code ec;
+    auto sz = std::filesystem::file_size(exe_path, ec);
+    std::string sz_str = (!ec) ? " (" + format_file_size(sz) + ")" : "";
+    std::cout << "Build successful: '" << exe_path << "'" << sz_str << "\n";
   }
 
   return 0;

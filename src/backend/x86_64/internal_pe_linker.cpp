@@ -519,6 +519,30 @@ bool InternalPELinker::link(const std::vector<AssembledModule> &modules,
     dlls_to_check.push_back(name + ".dll");
   }
 
+  auto add_dll_if_missing = [&](const std::string &dll) {
+    for (const auto &d : dlls_to_check) {
+      if (d.size() == dll.size() &&
+          std::equal(d.begin(), d.end(), dll.begin(), [](char a, char b) {
+            return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+          })) {
+        return;
+      }
+    }
+    dlls_to_check.push_back(dll);
+  };
+
+  // Always check kernel32.dll for base Win32 OS APIs
+  add_dll_if_missing("kernel32.dll");
+
+  // For GUI applications, automatically check user32.dll and gdi32.dll
+  if (config.subsystem == WindowsSubsystem::GUI) {
+    add_dll_if_missing("user32.dll");
+    add_dll_if_missing("gdi32.dll");
+  }
+
+  // Also check msvcrt.dll for standard C library exports
+  add_dll_if_missing("msvcrt.dll");
+
   for (const auto &dll_name : dlls_to_check) {
     std::string resolved_dll;
     for (const auto &dir : search_dirs) {

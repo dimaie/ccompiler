@@ -26,6 +26,7 @@ struct GeneralConfig {
   bool show_ast{false};
   bool show_ir{false};
   bool verbose{false};
+  bool quiet{false};
   bool emit_debug_info{true};
 };
 

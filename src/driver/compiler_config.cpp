@@ -35,6 +35,7 @@ void CompilerConfig::print(std::ostream &out) const {
   out << "  Show AST:       " << (general.show_ast ? "true" : "false") << "\n";
   out << "  Show IR:        " << (general.show_ir ? "true" : "false") << "\n";
   out << "  Verbose:        " << (general.verbose ? "true" : "false") << "\n";
+  out << "  Quiet:          " << (general.quiet ? "true" : "false") << "\n";
 
   out << "\n[Preprocessor]\n";
   out << "  Include Dirs:   ";
@@ -137,6 +138,7 @@ void CommandLineParser::print_usage(const char *prog_name, std::ostream &out) {
       << "  --show-ir              Print intermediate representation to stderr during compilation\n"
       << "  -shared                Produce shared library / DLL\n"
       << "  -v, --verbose          Verbose output; display compiler configuration before execution\n"
+      << "  -q, --quiet            Quiet mode; suppress compilation progress and result summary\n"
       << "  -I <dir>               Add directory to include search path\n"
       << "  -D <macro>[=val]       Define preprocessor macro\n"
       << "  -l<lib>                Link against library archive or DLL (e.g. -luser32)\n"
@@ -233,6 +235,10 @@ bool CommandLineParser::parse(const std::vector<std::string> &args, CompilerConf
     // Flags
     if (arg == "-v" || arg == "--verbose") {
       config.general.verbose = true;
+      continue;
+    }
+    if (arg == "-q" || arg == "--quiet") {
+      config.general.quiet = true;
       continue;
     }
     if (arg == "--ast") {
