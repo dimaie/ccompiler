@@ -1,29 +1,24 @@
 {
   "version": "2.0.0",
-  "options": {
-    "env": {
-      "PATH": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin;${env:PATH}"
-    }
-  },
   "tasks": [
     {
       "type": "shell",
       "label": "CMake: Configure",
-      "command": "cmake -B build -S .",
+      "command": "cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Debug",
       "options": {
         "cwd": "${workspaceFolder}"
       },
-      "problemMatcher": ["$msCompile"]
+      "problemMatcher": ["$gcc"]
     },
     {
       "type": "shell",
       "label": "CMake: Build",
-      "command": "cmake --build build --config Debug",
+      "command": "cmake --build build",
       "dependsOn": "CMake: Configure",
       "options": {
         "cwd": "${workspaceFolder}"
       },
-      "problemMatcher": ["$msCompile"],
+      "problemMatcher": ["$gcc"],
       "group": {
         "kind": "build",
         "isDefault": true
@@ -32,7 +27,7 @@
     {
       "type": "shell",
       "label": "CMake: Clean",
-      "command": "cmake --build build --target clean --config Debug",
+      "command": "cmake --build build --target clean",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -43,7 +38,7 @@
       "label": "CMake: Rebuild",
       "dependsOrder": "sequence",
       "dependsOn": ["CMake: Clean", "CMake: Build"],
-      "problemMatcher": ["$msCompile"],
+      "problemMatcher": ["$gcc"],
       "group": "build"
     },
     {
@@ -58,7 +53,7 @@
     {
       "type": "shell",
       "label": "CMake: Run Tests (CTest)",
-      "command": "ctest --test-dir build -C Debug --output-on-failure",
+      "command": "ctest --test-dir build --output-on-failure",
       "dependsOn": "CMake: Build",
       "options": {
         "cwd": "${workspaceFolder}"
@@ -72,7 +67,7 @@
     {
       "type": "shell",
       "label": "Run Parser Tests (Binary)",
-      "command": ".\\build\\Debug\\test_parser.exe",
+      "command": ".\\build\\test_parser.exe",
       "dependsOn": "CMake: Build",
       "options": {
         "cwd": "${workspaceFolder}"
@@ -83,7 +78,7 @@
     {
       "type": "shell",
       "label": "Run Codegen Tests (Binary)",
-      "command": ".\\build\\Debug\\test_codegen.exe",
+      "command": ".\\build\\test_codegen.exe",
       "dependsOn": "CMake: Build",
       "options": {
         "cwd": "${workspaceFolder}"
