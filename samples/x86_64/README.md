@@ -23,3 +23,14 @@ Compile and link against `user32.dll`:
 ./build/c_compiler.exe samples/x86_64/gui_msgbox.c -luser32 -o msgbox.exe
 ./msgbox.exe
 ```
+
+---
+
+## 3. Win32 GUI Counter Window (Button & Label)
+
+A complete Win32 window with a static label and an interactive increment button:
+
+```bash
+./build/c_compiler.exe samples/x86_64/gui_counter.c -luser32 -lkernel32 -o gui_counter.exe
+./gui_counter.exe
+```

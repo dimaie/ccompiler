@@ -169,13 +169,38 @@ AssembledModule X86_64InternalAssembler::assemble(const std::string &assembly_so
         continue;
       } else if (dir == ".text") {
         current_sec = SecText;
+      } else if (dir == ".data" || dir == ".bss") {
+        current_sec = SecData;
       } else if (dir == ".section") {
         std::string sec_name;
         ls >> sec_name;
-        if (sec_name.find(".rodata") != std::string::npos || sec_name.find(".rdata") != std::string::npos) {
+        if (sec_name.find(".rodata") != std::string::npos ||
+            sec_name.find(".rdata") != std::string::npos ||
+            sec_name.find(".data") != std::string::npos ||
+            sec_name.find(".bss") != std::string::npos) {
           current_sec = SecData;
         } else {
           current_sec = SecText;
+        }
+      } else if (dir == ".zero" || dir == ".byte" || dir == ".word" ||
+                 dir == ".long" || dir == ".quad") {
+        std::string operand;
+        ls >> operand;
+        int width = dir == ".byte" ? 1 : dir == ".word" ? 2 : dir == ".long" ? 4 : 8;
+        if (dir == ".zero") {
+          width = 0;
+        }
+        int64_t value = width == 0 ? std::stoll(operand) : std::stoll(operand, nullptr, 0);
+        for (int64_t i = 0; i < (width == 0 ? value : width); ++i) {
+          uint8_t byte = 0;
+          if (width > 0) {
+            byte = static_cast<uint8_t>((static_cast<uint64_t>(value) >> (i * 8)) & 0xFF);
+          }
+          if (current_sec == SecData) {
+            module.data_bytes.push_back(byte);
+          } else {
+            module.text_bytes.push_back(byte);
+          }
         }
       } else if (dir == ".string" || dir == ".asciz" || dir == ".ascii") {
         size_t q1 = line.find('"');

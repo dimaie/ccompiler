@@ -619,16 +619,10 @@ static void test_functions_codegen() {
     assert(fact_asm.find(".globl fact") != std::string::npos);
     assert(fact_asm.find("call fact") != std::string::npos);
 
-    // Test > 6 args unsupported
-    auto bad_call = parse("return foo(1, 2, 3, 4, 5, 6, 7);\n");
-    bool threw = false;
-    try {
-      gen->generate_to_string(*bad_call);
-    } catch (const UnsupportedFeatureException &e) {
-      threw = true;
-      assert(e.get_arch() == "x86_64");
-    }
-    assert(threw);
+    // Test > 4 args support on x86_64
+    auto multi_arg_call = parse("return foo(1, 2, 3, 4, 5, 6, 7);\n");
+    std::string multi_arg_asm = gen->generate_to_string(*multi_arg_call);
+    assert(multi_arg_asm.find("call foo") != std::string::npos);
 
     // Test variadic call sets %al to 0
     auto var_call = parse("int printf(const char *fmt, ...);\nint main() { printf(\"hello %d\", 42); return 0; }\n");
@@ -1127,6 +1121,18 @@ static void test_code_review_fixes() {
     // Must load pointer into %r11: movq -offset(%rbp), %r11
     assert(asm_code.find("movq -") != std::string::npos);
     assert(asm_code.find("(%r11, %rax, 2)") != std::string::npos);
+  }
+
+  // 7. x86_64: file-scope variables use persistent data storage
+  {
+    auto gen = CodeGeneratorFactory::create("x86_64");
+    auto prog = parse("int counter = 0;\n"
+                      "int main() { counter = counter + 1; return counter; }\n");
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find(".data\n.globl counter\ncounter:\n    .quad 0") != std::string::npos);
+    assert(asm_code.find("leaq counter(%rip), %r11") != std::string::npos);
+    assert(asm_code.find("movq (%r11), %rax") != std::string::npos);
+    assert(asm_code.find("movq %rax, (%r11)") != std::string::npos);
   }
 }
 

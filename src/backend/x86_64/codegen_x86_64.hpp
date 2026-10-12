@@ -75,6 +75,11 @@ private:
   std::unordered_map<std::string, CallingConvention> var_func_ptr_conventions_;
   std::unordered_map<std::string, CallingConvention> func_conventions_;
   std::unordered_set<std::string> defined_funcs_;
+  std::unordered_set<std::string> global_variables_;
+  std::vector<const VarDeclNode *> global_declarations_;
+  std::unordered_map<std::string, DataType> global_var_types_;
+  std::unordered_map<std::string, int> global_var_pointer_level_;
+  std::unordered_map<std::string, bool> global_var_is_array_;
   std::unordered_map<std::string, std::string> var_struct_name_;
   std::unordered_map<std::string, StructInfo> struct_defs_;
   int current_offset_{0};

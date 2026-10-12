@@ -53,6 +53,10 @@ DataType X86_64CodeGenerator::get_var_type(const std::string &name) const {
   if (it != var_types_.end()) {
     return it->second;
   }
+  auto global_it = global_var_types_.find(name);
+  if (global_it != global_var_types_.end()) {
+    return global_it->second;
+  }
   return DataType::Int;
 }
 
@@ -60,6 +64,10 @@ int X86_64CodeGenerator::get_var_pointer_level(const std::string &name) const {
   auto it = var_pointer_level_.find(name);
   if (it != var_pointer_level_.end()) {
     return it->second;
+  }
+  auto global_it = global_var_pointer_level_.find(name);
+  if (global_it != global_var_pointer_level_.end()) {
+    return global_it->second;
   }
   return 0;
 }
@@ -182,6 +190,8 @@ static int compute_ast_frame_bytes(const ASTNode *node) {
     const auto *v = static_cast<const VarDeclNode *>(node);
     if (v->is_array) {
       size += v->array_size * 8;
+    } else if (v->data_type == DataType::Struct || v->data_type == DataType::Union) {
+      size += 128; // conservative struct size estimate
     } else {
       size += 8;
     }
@@ -232,6 +242,11 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
   var_func_ptr_conventions_.clear();
   func_conventions_.clear();
   defined_funcs_.clear();
+  global_variables_.clear();
+  global_declarations_.clear();
+  global_var_types_.clear();
+  global_var_pointer_level_.clear();
+  global_var_is_array_.clear();
   var_struct_name_.clear();
   struct_defs_.clear();
   current_offset_ = 0;
@@ -287,6 +302,24 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
         non_func_stmts.push_back(stmt.get());
       }
     }
+  }
+
+  if (has_func_defs && has_main_func) {
+    std::vector<const ASTNode *> remaining_non_func_stmts;
+    for (const auto *stmt : non_func_stmts) {
+      if (stmt->getType() != ASTNodeType::VarDecl) {
+        remaining_non_func_stmts.push_back(stmt);
+        continue;
+      }
+
+      const auto *global = static_cast<const VarDeclNode *>(stmt);
+      global_variables_.insert(global->name);
+      global_declarations_.push_back(global);
+      global_var_types_[global->name] = global->data_type;
+      global_var_pointer_level_[global->name] = global->pointer_level;
+      global_var_is_array_[global->name] = global->is_array;
+    }
+    non_func_stmts = std::move(remaining_non_func_stmts);
   }
 
   if (!has_func_defs) {
@@ -364,6 +397,40 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
     emit_line("ret");
   }
 
+  if (!global_declarations_.empty()) {
+    emit_raw(".data");
+    for (const auto *global : global_declarations_) {
+      emit_raw(".globl " + global->name);
+      emit_raw(global->name + ":");
+      int size = global->is_array
+          ? global->array_size * get_type_size(global->data_type, global->struct_name)
+          : ((global->pointer_level > 0 || global->is_func_ptr)
+                 ? 8
+                 : get_type_size(global->data_type, global->struct_name));
+      if (!global->init) {
+        emit_raw("    .zero " + std::to_string(size));
+      } else if (global->init->getType() == ASTNodeType::IntLit) {
+        const auto *value = static_cast<const IntLitNode *>(global->init.get());
+        const char *directive = size == 1 ? ".byte " : size == 2 ? ".word " : ".quad ";
+        emit_raw("    " + std::string(directive) + std::to_string(value->val));
+      } else if (global->init->getType() == ASTNodeType::Identifier) {
+        const auto *ident = static_cast<const IdentifierNode *>(global->init.get());
+        emit_raw("    .quad " + ident->name);
+      } else if (global->init->getType() == ASTNodeType::UnaryOp) {
+        const auto *un = static_cast<const UnaryOpNode *>(global->init.get());
+        if (un->op == TOK_AMP && un->expr && un->expr->getType() == ASTNodeType::Identifier) {
+          const auto *ident = static_cast<const IdentifierNode *>(un->expr.get());
+          emit_raw("    .quad " + ident->name);
+        } else {
+          throw std::runtime_error("x86_64 global initializer must be an integer constant or symbol address");
+        }
+      } else {
+        throw std::runtime_error("x86_64 global initializer must be an integer constant");
+      }
+    }
+    emit_raw(".text");
+  }
+
   if (!string_literals_.empty()) {
     emit_raw(".section .rodata");
     for (const auto &lit : string_literals_) {
@@ -393,8 +460,10 @@ void X86_64CodeGenerator::visit(const FuncDefNode &node) {
   std::string prev_ret_label = ret_label_;
   ret_label_ = ".L" + node.name + "_ret";
 
-  static const char *const ARG_REGS[] = {
+  static const char *const SYSV_PARAM_REGS[] = {
       "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
+  static const char *const WIN64_PARAM_REGS[] = {
+      "%rcx", "%rdx", "%r8", "%r9"};
 
   std::ostringstream param_ss;
   if (node.calling_convention == CallingConvention::Default) {
@@ -411,12 +480,12 @@ void X86_64CodeGenerator::visit(const FuncDefNode &node) {
         var_offsets_[p.name] = 48 - static_cast<int>(i) * 8;
       }
       for (int i = 0; i < 6; ++i) {
-        param_ss << "    movq " << ARG_REGS[i] << ", -"
+        param_ss << "    movq " << SYSV_PARAM_REGS[i] << ", -"
                  << (48 - i * 8) << "(%rbp)\n";
       }
     } else {
       for (size_t i = 0; i < node.params.size(); ++i) {
-        if (i < 6) {
+        if (i < 4) {
           const auto &p = node.params[i];
           var_types_[p.name] = p.type;
           var_pointer_level_[p.name] = p.pointer_level;
@@ -425,10 +494,20 @@ void X86_64CodeGenerator::visit(const FuncDefNode &node) {
             var_func_ptr_conventions_[p.name] = p.func_ptr_calling_convention;
           }
           int offset = get_var_offset(p.name);
-          param_ss << "    movq " << ARG_REGS[i] << ", -"
+          param_ss << "    movq " << WIN64_PARAM_REGS[i] << ", -"
                    << offset << "(%rbp)\n";
         } else {
-          unsupported(node, "more than 6 function parameters");
+          const auto &p = node.params[i];
+          var_types_[p.name] = p.type;
+          var_pointer_level_[p.name] = p.pointer_level;
+          if (p.is_func_ptr) {
+            is_func_ptr_[p.name] = true;
+            var_func_ptr_conventions_[p.name] = p.func_ptr_calling_convention;
+          }
+          int offset = get_var_offset(p.name);
+          int stack_offset = 16 + static_cast<int>(i) * 8;
+          param_ss << "    movq " << stack_offset << "(%rbp), %rax\n";
+          param_ss << "    movq %rax, -" << offset << "(%rbp)\n";
         }
       }
     }
@@ -537,54 +616,108 @@ void X86_64CodeGenerator::visit(const CallNode &node) {
   }
 
   if (cc == CallingConvention::Default) {
-    if (node.args.size() > 6) {
-      unsupported(node, "more than 6 function call arguments");
-    }
-
-    for (const auto &arg : node.args) {
-      if (arg) {
-        arg->accept(*this);
-      } else {
-        emit_line("movq $0, %rax");
-      }
-      emit_line("pushq %rax");
-    }
-
+    int num_args = static_cast<int>(node.args.size());
     static const char *const ARG_REGS[] = {
         "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
-    for (int i = static_cast<int>(node.args.size()) - 1; i >= 0; --i) {
-      emit_line("popq " + std::string(ARG_REGS[i]));
-    }
 
-    // Dual-load Windows x64 ABI registers so external functions (e.g. puts, printf)
-    // work seamlessly on Windows (MinGW/MSVC) as well as SysV AMD64 (Linux).
-    // Internal functions use the SysV registers (%rdi, %rsi, %rdx, %rcx, %r8, %r9).
-    bool is_internal = (!node.callee.empty() && defined_funcs_.find(node.callee) != defined_funcs_.end());
-    if (!is_internal) {
+    if (num_args <= 6) {
+      for (const auto &arg : node.args) {
+        if (arg) {
+          arg->accept(*this);
+        } else {
+          emit_line("movq $0, %rax");
+        }
+        emit_line("pushq %rax");
+      }
+
+      for (int i = num_args - 1; i >= 0; --i) {
+        emit_line("popq " + std::string(ARG_REGS[i]));
+      }
+
       if (node.args.size() >= 4) emit_line("movq %rcx, %r9");
       if (node.args.size() >= 3) emit_line("movq %rdx, %r8");
       if (node.args.size() >= 2) emit_line("movq %rsi, %rdx");
       if (node.args.size() >= 1) emit_line("movq %rdi, %rcx");
-    }
-    emit_line("movb $0, %al");
+      emit_line("movb $0, %al");
 
-    if (is_indirect) {
-      emit_line("popq %r11");
-      emit_line("movq %rsp, %r10");
-      emit_line("andq $-16, %rsp");
-      emit_line("pushq %r10");
-      emit_line("subq $40, %rsp");
-      emit_line("call *%r11");
-      emit_line("addq $40, %rsp");
-      emit_line("popq %rsp");
+      if (is_indirect) {
+        emit_line("popq %r11");
+        emit_line("movq %rsp, %r10");
+        emit_line("andq $-16, %rsp");
+        emit_line("pushq %r10");
+        emit_line("subq $40, %rsp");
+        emit_line("call *%r11");
+        emit_line("addq $40, %rsp");
+        emit_line("popq %rsp");
+      } else {
+        emit_line("movq %rsp, %r11");
+        emit_line("andq $-16, %rsp");
+        emit_line("pushq %r11");
+        emit_line("subq $40, %rsp");
+        emit_line("call " + node.callee);
+        emit_line("addq $40, %rsp");
+        emit_line("popq %rsp");
+      }
     } else {
-      emit_line("movq %rsp, %r11");
-      emit_line("andq $-16, %rsp");
-      emit_line("pushq %r11");
-      emit_line("subq $40, %rsp");
-      emit_line("call " + node.callee);
-      emit_line("addq $40, %rsp");
-      emit_line("popq %rsp");
+      int stack_args = num_args - 4;
+      bool need_pad = (stack_args % 2 != 0);
+      if (need_pad) {
+        emit_line("subq $8, %rsp");
+      }
+
+      // Evaluate first 4 arguments
+      for (size_t i = 0; i < 4; ++i) {
+        if (node.args[i]) {
+          node.args[i]->accept(*this);
+        } else {
+          emit_line("movq $0, %rax");
+        }
+        emit_line("pushq %rax");
+      }
+
+      // Push 5th and subsequent arguments onto the stack in reverse order
+      // (so 5th argument ends up at the lowest stack address right above shadow space)
+      for (int i = num_args - 1; i >= 4; --i) {
+        if (node.args[i]) {
+          node.args[i]->accept(*this);
+        } else {
+          emit_line("movq $0, %rax");
+        }
+        emit_line("pushq %rax");
+      }
+
+      static const char *const SYSV_REGS[] = {
+          "%rdi", "%rsi", "%rdx", "%rcx"};
+      static const char *const WIN64_REGS[] = {
+          "%rcx", "%rdx", "%r8", "%r9"};
+
+      // Pop first 4 arguments (they are below stack_args + need_pad slots on the stack)
+      for (int i = 3; i >= 0; --i) {
+        int slot_offset = (stack_args + (need_pad ? 1 : 0) + (3 - i)) * 8;
+        emit_line("movq " + std::to_string(slot_offset) + "(%rsp), %rax");
+        emit_line("movq %rax, " + std::string(WIN64_REGS[i]));
+        emit_line("movq %rax, " + std::string(SYSV_REGS[i]));
+      }
+
+      emit_line("movb $0, %al");
+
+      if (is_indirect) {
+        int ind_offset = (stack_args + (need_pad ? 1 : 0)) * 8;
+        emit_line("movq " + std::to_string(ind_offset) + "(%rsp), %r11");
+        emit_line("subq $32, %rsp");
+        emit_line("call *%r11");
+        emit_line("addq $32, %rsp");
+        int cleanup_bytes = num_args * 8 + (need_pad ? 8 : 0) + 8;
+        emit_line("addq $" + std::to_string(cleanup_bytes) + ", %rsp");
+      } else {
+        emit_line("subq $32, %rsp");
+        emit_line("call " + node.callee);
+        emit_line("addq $32, %rsp");
+        int cleanup_bytes = num_args * 8 + (need_pad ? 8 : 0);
+        if (cleanup_bytes > 0) {
+          emit_line("addq $" + std::to_string(cleanup_bytes) + ", %rsp");
+        }
+      }
     }
   } else if (cc == CallingConvention::Cdecl || cc == CallingConvention::Stdcall) {
     int num_args = static_cast<int>(node.args.size());
@@ -692,6 +825,9 @@ void X86_64CodeGenerator::visit(const CompoundNode &node) {
 
 void X86_64CodeGenerator::visit(const VarDeclNode &node) {
   emit_loc(node.line, node.file_id);
+  if (global_variables_.count(node.name) && var_offsets_.find(node.name) == var_offsets_.end()) {
+    return;
+  }
   var_types_[node.name] = node.data_type;
   var_pointer_level_[node.name] = node.pointer_level;
   if (node.is_func_ptr) {
@@ -986,6 +1122,23 @@ void X86_64CodeGenerator::visit(const AssignNode &node) {
     throw std::runtime_error("Left-hand side of assignment must be variable, array element, or dereference");
   }
   auto *ident = static_cast<const IdentifierNode *>(node.left.get());
+  if (var_offsets_.find(ident->name) == var_offsets_.end() &&
+      global_variables_.count(ident->name)) {
+    if (node.right) {
+      node.right->accept(*this);
+    }
+    emit_line("leaq " + ident->name + "(%rip), %r11");
+    if (get_var_type(ident->name) == DataType::Char &&
+        get_var_pointer_level(ident->name) == 0) {
+      emit_line("movb %al, (%r11)");
+    } else if (get_var_type(ident->name) == DataType::Short &&
+               get_var_pointer_level(ident->name) == 0) {
+      emit_line("movw %ax, (%r11)");
+    } else {
+      emit_line("movq %rax, (%r11)");
+    }
+    return;
+  }
   int offset = get_var_offset(ident->name);
 
   if (node.right) {
@@ -1013,8 +1166,23 @@ void X86_64CodeGenerator::visit(const StringLitNode &node) {
 void X86_64CodeGenerator::visit(const IdentifierNode &node) {
   auto it_offset = var_offsets_.find(node.name);
   if (it_offset == var_offsets_.end()) {
-    // Function address decay / symbol reference
-    emit_line("leaq " + node.name + "(%rip), %rax");
+    if (global_variables_.count(node.name)) {
+      emit_line("leaq " + node.name + "(%rip), %r11");
+      if (global_var_is_array_[node.name]) {
+        emit_line("movq %r11, %rax");
+      } else if (get_var_type(node.name) == DataType::Char &&
+                 get_var_pointer_level(node.name) == 0) {
+        emit_line("movsbq (%r11), %rax");
+      } else if (get_var_type(node.name) == DataType::Short &&
+                 get_var_pointer_level(node.name) == 0) {
+        emit_line("movswq (%r11), %rax");
+      } else {
+        emit_line("movq (%r11), %rax");
+      }
+    } else {
+      // Function address decay / symbol reference
+      emit_line("leaq " + node.name + "(%rip), %rax");
+    }
     return;
   }
   int offset = it_offset->second;
@@ -1231,6 +1399,23 @@ void X86_64CodeGenerator::visit(const BinaryOpNode &node) {
     emit_line("cqto");
     emit_line("idivq %r10");
     emit_line("movq %rdx, %rax");
+    break;
+  case TOK_AMP:
+    emit_line("andq %r10, %rax");
+    break;
+  case TOK_PIPE:
+    emit_line("orq %r10, %rax");
+    break;
+  case TOK_CARET:
+    emit_line("xorq %r10, %rax");
+    break;
+  case TOK_LSHIFT:
+    emit_line("movq %r10, %rcx");
+    emit_line("shlq %cl, %rax");
+    break;
+  case TOK_RSHIFT:
+    emit_line("movq %r10, %rcx");
+    emit_line("shrq %cl, %rax");
     break;
   case TOK_EQUAL:
     emit_line("cmpq %r10, %rax");
@@ -1497,9 +1682,6 @@ void X86_64CodeGenerator::visit(const StructDefNode &node) {
     } else {
       mi.offset = offset;
       offset += mi.size;
-      if (offset % 8 != 0) {
-        offset += 8 - (offset % 8);
-      }
     }
     info.members.push_back(mi);
     info.member_map[mi.name] = mi;
@@ -1508,6 +1690,9 @@ void X86_64CodeGenerator::visit(const StructDefNode &node) {
     if (max_size % 8 != 0) max_size += 8 - (max_size % 8);
     info.total_size = max_size > 0 ? max_size : 8;
   } else {
+    if (offset % 8 != 0) {
+      offset += 8 - (offset % 8);
+    }
     info.total_size = offset > 0 ? offset : 8;
   }
   if (!node.name.empty()) {

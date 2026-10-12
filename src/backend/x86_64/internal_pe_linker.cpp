@@ -705,14 +705,23 @@ bool InternalPELinker::link(const std::vector<AssembledModule> &modules,
       write_int32_le(module.text_bytes, reloc.text_offset, disp);
     } else if (reloc.type == RelocType::Rip_Data) {
       auto it = module.data_offsets.find(reloc.symbol);
-      if (it == module.data_offsets.end()) {
-        error_msg = "Linker error: unresolved data label '" + reloc.symbol + "'";
-        return false;
+      if (it != module.data_offsets.end()) {
+        uint32_t data_rva = rdata_rva + it->second;
+        uint32_t next_rva = text_rva + static_cast<uint32_t>(reloc.text_offset + 4);
+        int32_t disp = static_cast<int32_t>(data_rva - next_rva);
+        write_int32_le(module.text_bytes, reloc.text_offset, disp);
+      } else {
+        auto code_it = module.symbol_offsets.find(reloc.symbol);
+        if (code_it != module.symbol_offsets.end()) {
+          uint32_t code_rva = text_rva + code_it->second;
+          uint32_t next_rva = text_rva + static_cast<uint32_t>(reloc.text_offset + 4);
+          int32_t disp = static_cast<int32_t>(code_rva - next_rva);
+          write_int32_le(module.text_bytes, reloc.text_offset, disp);
+        } else {
+          error_msg = "Linker error: unresolved data label '" + reloc.symbol + "'";
+          return false;
+        }
       }
-      uint32_t data_rva = rdata_rva + it->second;
-      uint32_t next_rva = text_rva + static_cast<uint32_t>(reloc.text_offset + 4);
-      int32_t disp = static_cast<int32_t>(data_rva - next_rva);
-      write_int32_le(module.text_bytes, reloc.text_offset, disp);
     }
   }
 
@@ -767,7 +776,7 @@ bool InternalPELinker::link(const std::vector<AssembledModule> &modules,
   sec_rdata.VirtualAddress = rdata_rva;
   sec_rdata.SizeOfRawData = rdata_raw_size;
   sec_rdata.PointerToRawData = 0x400 + text_raw_size;
-  sec_rdata.Characteristics = 0x40000040; // CNT_INITIALIZED_DATA | MEM_READ
+  sec_rdata.Characteristics = 0xC0000040; // CNT_INITIALIZED_DATA | MEM_READ | MEM_WRITE
 
   // DWARF Debug Information (.debug_line, .debug_info, .debug_abbrev)
   bool has_debug = !module.source_locs.empty() && !config.strip_debug_info;
