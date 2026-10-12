@@ -321,6 +321,16 @@ void CCodeGenerator::visit(const UnaryOpNode &node) {
     *out_ << ")";
     return;
   }
+  if (node.op == TOK_INC || node.op == TOK_DEC) {
+    if (node.is_postfix) {
+      if (node.expr) node.expr->accept(*this);
+      *out_ << (node.op == TOK_INC ? "++" : "--");
+    } else {
+      *out_ << (node.op == TOK_INC ? "++" : "--");
+      if (node.expr) node.expr->accept(*this);
+    }
+    return;
+  }
   *out_ << token_op_str(node.op);
   if (node.op == TOK_MINUS || node.op == TOK_PLUS) {
     *out_ << " ";

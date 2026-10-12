@@ -1216,99 +1216,182 @@ void X86_64CodeGenerator::visit(const IdentifierNode &node) {
   }
 }
 
+void X86_64CodeGenerator::emit_lvalue_address(const ASTNode *expr) {
+  if (!expr) {
+    throw std::runtime_error("Null expression in emit_lvalue_address");
+  }
+  if (expr->getType() == ASTNodeType::Identifier) {
+    auto *ident = static_cast<const IdentifierNode *>(expr);
+    auto it = var_offsets_.find(ident->name);
+    if (it != var_offsets_.end()) {
+      emit_line("leaq -" + std::to_string(it->second) + "(%rbp), %rax");
+    } else {
+      emit_line("leaq " + ident->name + "(%rip), %rax");
+    }
+    return;
+  }
+  if (expr->getType() == ASTNodeType::ArrayAccess) {
+    auto *acc = static_cast<const ArrayAccessNode *>(expr);
+    if (!acc->array || acc->array->getType() != ASTNodeType::Identifier) {
+      unsupported(*expr, "complex array address");
+    }
+    auto *ident = static_cast<const IdentifierNode *>(acc->array.get());
+    int base_offset = get_var_offset(ident->name);
+    if (acc->index) {
+      acc->index->accept(*this);
+    } else {
+      emit_line("movq $0, %rax");
+    }
+    bool is_local_arr = false;
+    auto arr_it = is_array_.find(ident->name);
+    if (arr_it != is_array_.end() && arr_it->second) {
+      is_local_arr = true;
+    }
+
+    if (is_local_arr) {
+      emit_line("leaq -" + std::to_string(base_offset) + "(%rbp), %r11");
+    } else {
+      emit_line("movq -" + std::to_string(base_offset) + "(%rbp), %r11");
+    }
+
+    int ptr_level = 0;
+    DataType elem_type = get_expr_type(ident, ptr_level);
+    bool is_elem_char = (elem_type == DataType::Char && ptr_level <= 1);
+    bool is_elem_short = (elem_type == DataType::Short && ptr_level <= 1);
+    if (is_elem_char) {
+      emit_line("leaq (%r11, %rax, 1), %rax");
+    } else if (is_elem_short) {
+      emit_line("leaq (%r11, %rax, 2), %rax");
+    } else {
+      int elem_size = 8;
+      if (elem_type == DataType::Struct || elem_type == DataType::Union) {
+        auto st_it = var_struct_name_.find(ident->name);
+        if (st_it != var_struct_name_.end()) {
+          elem_size = get_type_size(elem_type, st_it->second);
+        }
+      }
+      if (elem_size == 8) {
+        emit_line("leaq (%r11, %rax, 8), %rax");
+      } else {
+        emit_line("imulq $" + std::to_string(elem_size) + ", %rax");
+        emit_line("leaq (%r11, %rax), %rax");
+      }
+    }
+    return;
+  }
+  if (expr->getType() == ASTNodeType::MemberAccess) {
+    auto *mem = static_cast<const MemberAccessNode *>(expr);
+    std::string st_name = get_expr_struct_type(mem->object.get());
+    auto it = struct_defs_.find(st_name);
+    if (it == struct_defs_.end()) {
+      unsupported(*expr, "unknown struct type '" + st_name + "'");
+    }
+    auto mit = it->second.member_map.find(mem->member);
+    if (mit == it->second.member_map.end()) {
+      unsupported(*expr, "unknown member '" + mem->member + "' in struct '" + st_name + "'");
+    }
+    const auto &m = mit->second;
+    if (mem->is_arrow) {
+      mem->object->accept(*this);
+      if (m.offset > 0) {
+        emit_line("addq $" + std::to_string(m.offset) + ", %rax");
+      }
+      return;
+    } else {
+      if (mem->object->getType() == ASTNodeType::Identifier) {
+        auto *ident = static_cast<const IdentifierNode *>(mem->object.get());
+        int base_offset = get_var_offset(ident->name);
+        int mem_offset = base_offset - m.offset;
+        emit_line("leaq -" + std::to_string(mem_offset) + "(%rbp), %rax");
+        return;
+      }
+    }
+  }
+  if (expr->getType() == ASTNodeType::UnaryOp &&
+      static_cast<const UnaryOpNode *>(expr)->op == TOK_STAR) {
+    auto *un = static_cast<const UnaryOpNode *>(expr);
+    if (un->expr) {
+      un->expr->accept(*this);
+    } else {
+      emit_line("movq $0, %rax");
+    }
+    return;
+  }
+  unsupported(*expr, "unsupported address-of expression");
+}
+
 void X86_64CodeGenerator::visit(const UnaryOpNode &node) {
   if (node.op == TOK_AMP) {
     if (!node.expr) {
       unsupported(node, "empty address-of");
     }
-    if (node.expr->getType() == ASTNodeType::Identifier) {
-      auto *ident = static_cast<const IdentifierNode *>(node.expr.get());
-      auto it = var_offsets_.find(ident->name);
-      if (it != var_offsets_.end()) {
-        emit_line("leaq -" + std::to_string(it->second) + "(%rbp), %rax");
-      } else {
-        emit_line("leaq " + ident->name + "(%rip), %rax");
-      }
-      return;
-    }
-    if (node.expr->getType() == ASTNodeType::ArrayAccess) {
-      auto *acc = static_cast<const ArrayAccessNode *>(node.expr.get());
-      if (!acc->array || acc->array->getType() != ASTNodeType::Identifier) {
-        unsupported(node, "complex array address");
-      }
-      auto *ident = static_cast<const IdentifierNode *>(acc->array.get());
-      int base_offset = get_var_offset(ident->name);
-      if (acc->index) {
-        acc->index->accept(*this);
-      } else {
-        emit_line("movq $0, %rax");
-      }
-      bool is_local_arr = false;
-      auto arr_it = is_array_.find(ident->name);
-      if (arr_it != is_array_.end() && arr_it->second) {
-        is_local_arr = true;
-      }
+    emit_lvalue_address(node.expr.get());
+    return;
+  }
 
-      if (is_local_arr) {
-        emit_line("leaq -" + std::to_string(base_offset) + "(%rbp), %r11");
+  if (node.op == TOK_INC || node.op == TOK_DEC) {
+    if (!node.expr) {
+      unsupported(node, "empty inc/dec expression");
+    }
+    int ptr_level = 0;
+    DataType dt = get_expr_type(node.expr.get(), ptr_level);
+    int step = 1;
+    if (ptr_level > 0) {
+      if (ptr_level == 1 && dt == DataType::Char) step = 1;
+      else if (ptr_level == 1 && dt == DataType::Short) step = 2;
+      else if (ptr_level == 1 && (dt == DataType::Struct || dt == DataType::Union)) {
+        std::string st_name = get_expr_struct_type(node.expr.get());
+        step = get_type_size(dt, st_name);
       } else {
-        emit_line("movq -" + std::to_string(base_offset) + "(%rbp), %r11");
+        step = 8;
       }
+    }
 
-      int ptr_level = 0;
-      DataType elem_type = get_expr_type(ident, ptr_level);
-      bool is_elem_char = (elem_type == DataType::Char && ptr_level <= 1);
-      bool is_elem_short = (elem_type == DataType::Short && ptr_level <= 1);
-      if (is_elem_char) {
-        emit_line("leaq (%r11, %rax, 1), %rax");
-      } else if (is_elem_short) {
-        emit_line("leaq (%r11, %rax, 2), %rax");
-      } else {
-        int elem_size = 8;
-        if (elem_type == DataType::Struct || elem_type == DataType::Union) {
-          auto st_it = var_struct_name_.find(ident->name);
-          if (st_it != var_struct_name_.end()) {
-            elem_size = get_type_size(elem_type, st_it->second);
-          }
-        }
-        if (elem_size == 8) {
-          emit_line("leaq (%r11, %rax, 8), %rax");
-        } else {
-          emit_line("imulq $" + std::to_string(elem_size) + ", %rax");
-          emit_line("leaq (%r11, %rax), %rax");
-        }
-      }
-      return;
+    emit_lvalue_address(node.expr.get());
+    emit_line("movq %rax, %r11"); // %r11 = lvalue address
+
+    // Load current value into %rax
+    if (dt == DataType::Char && ptr_level == 0) {
+      emit_line("movsbq (%r11), %rax");
+    } else if (dt == DataType::Short && ptr_level == 0) {
+      emit_line("movswq (%r11), %rax");
+    } else {
+      emit_line("movq (%r11), %rax");
     }
-    if (node.expr->getType() == ASTNodeType::MemberAccess) {
-      auto *mem = static_cast<const MemberAccessNode *>(node.expr.get());
-      std::string st_name = get_expr_struct_type(mem->object.get());
-      auto it = struct_defs_.find(st_name);
-      if (it == struct_defs_.end()) {
-        unsupported(node, "unknown struct type '" + st_name + "'");
-      }
-      auto mit = it->second.member_map.find(mem->member);
-      if (mit == it->second.member_map.end()) {
-        unsupported(node, "unknown member '" + mem->member + "' in struct '" + st_name + "'");
-      }
-      const auto &m = mit->second;
-      if (mem->is_arrow) {
-        mem->object->accept(*this);
-        if (m.offset > 0) {
-          emit_line("addq $" + std::to_string(m.offset) + ", %rax");
-        }
-        return;
+
+    if (node.is_postfix) {
+      emit_line("movq %rax, %r10"); // save old value in %r10
+      if (node.op == TOK_INC) {
+        emit_line("addq $" + std::to_string(step) + ", %rax");
       } else {
-        if (mem->object->getType() == ASTNodeType::Identifier) {
-          auto *ident = static_cast<const IdentifierNode *>(mem->object.get());
-          int base_offset = get_var_offset(ident->name);
-          int mem_offset = base_offset - m.offset;
-          emit_line("leaq -" + std::to_string(mem_offset) + "(%rbp), %rax");
-          return;
-        }
+        emit_line("subq $" + std::to_string(step) + ", %rax");
       }
+      // Store updated value
+      if (dt == DataType::Char && ptr_level == 0) {
+        emit_line("movb %al, (%r11)");
+      } else if (dt == DataType::Short && ptr_level == 0) {
+        emit_line("movw %ax, (%r11)");
+      } else {
+        emit_line("movq %rax, (%r11)");
+      }
+      emit_line("movq %r10, %rax"); // return old value
+    } else {
+      if (node.op == TOK_INC) {
+        emit_line("addq $" + std::to_string(step) + ", %rax");
+      } else {
+        emit_line("subq $" + std::to_string(step) + ", %rax");
+      }
+      // Store updated value
+      if (dt == DataType::Char && ptr_level == 0) {
+        emit_line("movb %al, (%r11)");
+      } else if (dt == DataType::Short && ptr_level == 0) {
+        emit_line("movw %ax, (%r11)");
+      } else {
+        emit_line("movq %rax, (%r11)");
+      }
+      // %rax already contains the new value
     }
-    unsupported(node, "unsupported address-of expression");
+    return;
   }
 
   if (node.op == TOK_STAR) {

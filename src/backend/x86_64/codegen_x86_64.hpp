@@ -104,6 +104,7 @@ private:
   DataType get_expr_type(const ASTNode *expr, int &pointer_level) const;
   std::string get_expr_struct_type(const ASTNode *expr) const;
   int get_type_size(DataType type, const std::string &st_name = "") const;
+  void emit_lvalue_address(const ASTNode *expr);
 };
 
 #endif // CODEGEN_X86_64_HPP

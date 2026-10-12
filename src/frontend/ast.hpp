@@ -104,8 +104,38 @@ inline const char *token_op_str(TokenType op) {
     return "!";
   case TOK_AMP:
     return "&";
-  case TOK_TILDE:
-    return "~";
+  case TOK_INC:
+    return "++";
+  case TOK_DEC:
+    return "--";
+  case TOK_CARET:
+    return "^";
+  case TOK_PIPE:
+    return "|";
+  case TOK_LSHIFT:
+    return "<<";
+  case TOK_RSHIFT:
+    return ">>";
+  case TOK_ADD_ASSIGN:
+    return "+=";
+  case TOK_SUB_ASSIGN:
+    return "-=";
+  case TOK_MUL_ASSIGN:
+    return "*=";
+  case TOK_DIV_ASSIGN:
+    return "/=";
+  case TOK_MOD_ASSIGN:
+    return "%=";
+  case TOK_AND_ASSIGN:
+    return "&=";
+  case TOK_OR_ASSIGN:
+    return "|=";
+  case TOK_XOR_ASSIGN:
+    return "^=";
+  case TOK_SHL_ASSIGN:
+    return "<<=";
+  case TOK_SHR_ASSIGN:
+    return ">>=";
   case TOK_ASSIGN:
     return "=";
   default:
@@ -734,16 +764,18 @@ class UnaryOpNode : public ASTNode {
 public:
   TokenType op;
   std::unique_ptr<ASTNode> expr;
+  bool is_postfix{false};
 
-  UnaryOpNode(int line, TokenType op, std::unique_ptr<ASTNode> expr)
-      : ASTNode(line), op(op), expr(std::move(expr)) {}
+  UnaryOpNode(int line, TokenType op, std::unique_ptr<ASTNode> expr,
+              bool is_postfix = false)
+      : ASTNode(line), op(op), expr(std::move(expr)), is_postfix(is_postfix) {}
 
   ASTNodeType getType() const override { return ASTNodeType::UnaryOp; }
   void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
 
   void print(int indent = 0) const override {
     print_indent(indent);
-    std::cout << "UnaryOp (" << token_op_str(op) << ")\n";
+    std::cout << "UnaryOp (" << (is_postfix ? "postfix " : "") << token_op_str(op) << ")\n";
     if (expr) {
       expr->print(indent + 1);
     }

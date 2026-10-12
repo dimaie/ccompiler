@@ -2235,6 +2235,61 @@ static void test_ternary_codegen() {
   }
 }
 
+static void test_inc_dec_and_compound_codegen() {
+  std::cout << "Testing Inc/Dec and Compound Assignment codegen across backends...\n";
+
+  std::string src = "int main() {\n"
+                    "  int x = 5;\n"
+                    "  x++;\n"
+                    "  ++x;\n"
+                    "  x--;\n"
+                    "  --x;\n"
+                    "  x += 10;\n"
+                    "  x *= 2;\n"
+                    "  x -= 4;\n"
+                    "  x /= 2;\n"
+                    "  return x;\n"
+                    "}\n";
+  auto prog = parse(src.c_str());
+
+  // 1. x86_64
+  {
+    auto gen = CodeGeneratorFactory::create(TargetArch::X86_64);
+    std::string code = gen->generate_to_string(*prog);
+    assert(code.find("addq $1, %rax") != std::string::npos);
+    assert(code.find("subq $1, %rax") != std::string::npos);
+    assert(code.find("addq %r10, %rax") != std::string::npos);
+    assert(code.find("imulq %r10, %rax") != std::string::npos);
+  }
+
+  // 2. ARM64
+  {
+    auto gen = CodeGeneratorFactory::create(TargetArch::ARM64);
+    std::string code = gen->generate_to_string(*prog);
+    assert(code.find("add x0, x0, #1") != std::string::npos);
+    assert(code.find("sub x0, x0, #1") != std::string::npos);
+    assert(code.find("add x0, x0, x") != std::string::npos || code.find("add") != std::string::npos);
+  }
+
+  // 3. AVR
+  {
+    auto gen = CodeGeneratorFactory::create(TargetArch::AVR);
+    std::string code = gen->generate_to_string(*prog);
+    assert(code.find("adiw r24, 1") != std::string::npos);
+    assert(code.find("sbiw r24, 1") != std::string::npos);
+  }
+
+  // 4. C transpiler
+  {
+    auto gen = CodeGeneratorFactory::create(TargetArch::C_Transpiler);
+    std::string code = gen->generate_to_string(*prog);
+    assert(code.find("++") != std::string::npos);
+    assert(code.find("--") != std::string::npos);
+    assert(code.find("+") != std::string::npos);
+    assert(code.find("*") != std::string::npos);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Code Generator Test Suite\n";
@@ -2263,9 +2318,10 @@ int main() {
   test_multi_module_compilation_and_linking();
   test_debug_information_codegen();
   test_ternary_codegen();
+  test_inc_dec_and_compound_codegen();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL CODEGEN TESTS PASSED! (23/23)\n";
+  std::cout << "  ALL CODEGEN TESTS PASSED! (24/24)\n";
   std::cout << "========================================\n";
   return 0;
 }

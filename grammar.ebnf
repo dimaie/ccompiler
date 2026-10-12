@@ -109,7 +109,7 @@ expr
     = assignment ;
 
 assignment
-    = ( IDENTIFIER | array_access | member_access | deref_expr ) , "=" , assignment
+    = ( IDENTIFIER | array_access | member_access | deref_expr ) , ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ) , assignment
     | conditional ;
 
 conditional
@@ -144,11 +144,11 @@ multiplicative
     = unary , { ( "*" | "/" | "%" ) , unary } ;
 
 unary
-    = ( "+" | "-" | "!" | "~" | "&" | "*" ) , unary
+    = ( "++" | "--" | "+" | "-" | "!" | "~" | "&" | "*" ) , unary
     | primary ;
 
 primary
-    = primary_base , { ( "[" , expr , "]" ) | ( "." , IDENTIFIER ) | ( "->" , IDENTIFIER ) | ( "(" , [ arg_list ] , ")" ) } ;
+    = primary_base , { ( "[" , expr , "]" ) | ( "." , IDENTIFIER ) | ( "->" , IDENTIFIER ) | ( "(" , [ arg_list ] , ")" ) | "++" | "--" } ;
 
 primary_base
     = IDENTIFIER

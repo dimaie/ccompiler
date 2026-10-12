@@ -118,7 +118,7 @@ expr
     ::= assignment ;
 
 assignment
-    ::= ( IDENTIFIER | array_access | member_access | deref_expr ) "=" assignment
+    ::= ( IDENTIFIER | array_access | member_access | deref_expr ) ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ) assignment
       | conditional ;
 
 conditional
@@ -153,11 +153,11 @@ multiplicative
     ::= unary ( ( "*" | "/" | "%" ) unary )* ;
 
 unary
-    ::= ( "+" | "-" | "!" | "~" | "&" | "*" ) unary
+    ::= ( "++" | "--" | "+" | "-" | "!" | "~" | "&" | "*" ) unary
       | primary ;
 
 primary
-    ::= primary_base ( "[" expr "]" | "." IDENTIFIER | "->" IDENTIFIER | "(" ( expr ( "," expr )* )? ")" )* ;
+    ::= primary_base ( "[" expr "]" | "." IDENTIFIER | "->" IDENTIFIER | "(" ( expr ( "," expr )* )? ")" | "++" | "--" )* ;
 
 primary_base
     ::= IDENTIFIER
@@ -173,15 +173,20 @@ Operators supported by the parser, ordered from highest to lowest precedence:
 
 | Precedence | Operator | Description | Associativity | AST Node Type |
 | :---: | :---: | :--- | :---: | :--- |
-| **1 (Highest)** | `( )`, `[ ]`, `.`, `->` | Function call, array subscript, structure/union member access | Left-to-right | `AST_CALL`, `AST_ARRAY_ACCESS`, `AST_MEMBER_ACCESS` |
-| **2** | `+`, `-`, `!`, `~`, `&`, `*` | Unary positive, negation, logical NOT, bitwise NOT, address-of, dereference | Right-to-left | `AST_UNARY_OP` |
-| **3** | `*`, `/`, `%` | Multiplication, division, modulo | Left-to-right | `AST_BINARY_OP` |
-| **4** | `+`, `-` | Addition, subtraction | Left-to-right | `AST_BINARY_OP` |
-| **5** | `<`, `<=`, `>`, `>=` | Relational comparisons | Left-to-right | `AST_BINARY_OP` |
-| **6** | `==`, `!=` | Equality and inequality | Left-to-right | `AST_BINARY_OP` |
-| **7** | `&&` | Logical AND | Left-to-right | `AST_BINARY_OP` |
-| **8** | `\|\|` | Logical OR | Left-to-right | `AST_BINARY_OP` |
-| **9 (Lowest)** | `=` | Assignment | Right-to-left | `AST_ASSIGN` |
+| **1 (Highest)** | `( )`, `[ ]`, `.`, `->`, `++`, `--` | Function call, subscript, member access, postfix inc/dec | Left-to-right | `CallNode`, `ArrayAccessNode`, `MemberAccessNode`, `UnaryOpNode` |
+| **2** | `++`, `--`, `+`, `-`, `!`, `~`, `&`, `*` | Prefix inc/dec, unary plus/minus, logical NOT, bitwise NOT, address-of, dereference | Right-to-left | `UnaryOpNode` |
+| **3** | `*`, `/`, `%` | Multiplication, division, modulo | Left-to-right | `BinaryOpNode` |
+| **4** | `+`, `-` | Addition, subtraction | Left-to-right | `BinaryOpNode` |
+| **5** | `<<`, `>>` | Bitwise left and right shifts | Left-to-right | `BinaryOpNode` |
+| **6** | `<`, `<=`, `>`, `>=` | Relational comparisons | Left-to-right | `BinaryOpNode` |
+| **7** | `==`, `!=` | Equality and inequality | Left-to-right | `BinaryOpNode` |
+| **8** | `&` | Bitwise AND | Left-to-right | `BinaryOpNode` |
+| **9** | `^` | Bitwise XOR | Left-to-right | `BinaryOpNode` |
+| **10** | `\|` | Bitwise OR | Left-to-right | `BinaryOpNode` |
+| **11** | `&&` | Logical AND | Left-to-right | `BinaryOpNode` |
+| **12** | `\|\|` | Logical OR | Left-to-right | `BinaryOpNode` |
+| **13** | `? :` | Ternary conditional operator | Right-to-left | `TernaryOpNode` |
+| **14 (Lowest)** | `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `\|=`, `^=`, `<<=`, `>>=` | Assignment and compound assignments | Right-to-left | `AssignNode` |
 
 ---
 

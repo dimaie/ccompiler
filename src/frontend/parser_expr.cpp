@@ -31,6 +31,62 @@ const std::unordered_map<TokenType, BinaryOpInfo> BINARY_OPS = {
     {TOK_PERCENT,    {11, false}}, // %
 };
 
+std::unique_ptr<ASTNode> clone_ast(const ASTNode *node) {
+  if (!node) return nullptr;
+  switch (node->getType()) {
+  case ASTNodeType::Identifier: {
+    auto *id = static_cast<const IdentifierNode *>(node);
+    return std::make_unique<IdentifierNode>(id->line, id->name);
+  }
+  case ASTNodeType::IntLit: {
+    auto *lit = static_cast<const IntLitNode *>(node);
+    return std::make_unique<IntLitNode>(lit->line, lit->val);
+  }
+  case ASTNodeType::StringLit: {
+    auto *lit = static_cast<const StringLitNode *>(node);
+    return std::make_unique<StringLitNode>(lit->line, lit->value);
+  }
+  case ASTNodeType::ArrayAccess: {
+    auto *acc = static_cast<const ArrayAccessNode *>(node);
+    return std::make_unique<ArrayAccessNode>(acc->line, clone_ast(acc->array.get()), clone_ast(acc->index.get()));
+  }
+  case ASTNodeType::MemberAccess: {
+    auto *mem = static_cast<const MemberAccessNode *>(node);
+    return std::make_unique<MemberAccessNode>(mem->line, clone_ast(mem->object.get()), mem->member, mem->is_arrow);
+  }
+  case ASTNodeType::UnaryOp: {
+    auto *un = static_cast<const UnaryOpNode *>(node);
+    return std::make_unique<UnaryOpNode>(un->line, un->op, clone_ast(un->expr.get()), un->is_postfix);
+  }
+  case ASTNodeType::BinaryOp: {
+    auto *bin = static_cast<const BinaryOpNode *>(node);
+    return std::make_unique<BinaryOpNode>(bin->line, bin->op, clone_ast(bin->left.get()), clone_ast(bin->right.get()));
+  }
+  case ASTNodeType::TernaryOp: {
+    auto *ter = static_cast<const TernaryOpNode *>(node);
+    return std::make_unique<TernaryOpNode>(ter->line, clone_ast(ter->cond.get()), clone_ast(ter->then_expr.get()), clone_ast(ter->else_expr.get()));
+  }
+  case ASTNodeType::Assign: {
+    auto *as = static_cast<const AssignNode *>(node);
+    return std::make_unique<AssignNode>(as->line, clone_ast(as->left.get()), clone_ast(as->right.get()));
+  }
+  case ASTNodeType::Call: {
+    auto *call = static_cast<const CallNode *>(node);
+    std::vector<std::unique_ptr<ASTNode>> args;
+    for (const auto &arg : call->args) {
+      args.push_back(clone_ast(arg.get()));
+    }
+    if (call->callee_expr) {
+      return std::make_unique<CallNode>(call->line, clone_ast(call->callee_expr.get()), std::move(args));
+    } else {
+      return std::make_unique<CallNode>(call->line, call->callee, std::move(args));
+    }
+  }
+  default:
+    return nullptr;
+  }
+}
+
 } // namespace
 
 std::unique_ptr<ASTNode> Parser::parse_primary() {
@@ -120,9 +176,29 @@ std::unique_ptr<ASTNode> Parser::parse_primary() {
     parse_error(t, "Expected expression");
   }
 
-  // Postfix array indexing: arr[index] or indirect function calls (expr)(args)
+  // Postfix array indexing, member access, calls, and postfix ++ / --
   while (true) {
-    if (match(TOK_LBRACKET)) {
+    if (match(TOK_INC)) {
+      bool valid_lvalue = (expr->getType() == ASTNodeType::Identifier) ||
+                          (expr->getType() == ASTNodeType::ArrayAccess) ||
+                          (expr->getType() == ASTNodeType::MemberAccess) ||
+                          (expr->getType() == ASTNodeType::UnaryOp &&
+                           static_cast<const UnaryOpNode *>(expr.get())->op == TOK_STAR);
+      if (!valid_lvalue) {
+        parse_error(peek(), "Operand of postfix ++ must be an lvalue");
+      }
+      expr = std::make_unique<UnaryOpNode>(expr->line, TOK_INC, std::move(expr), true /* is_postfix */);
+    } else if (match(TOK_DEC)) {
+      bool valid_lvalue = (expr->getType() == ASTNodeType::Identifier) ||
+                          (expr->getType() == ASTNodeType::ArrayAccess) ||
+                          (expr->getType() == ASTNodeType::MemberAccess) ||
+                          (expr->getType() == ASTNodeType::UnaryOp &&
+                           static_cast<const UnaryOpNode *>(expr.get())->op == TOK_STAR);
+      if (!valid_lvalue) {
+        parse_error(peek(), "Operand of postfix -- must be an lvalue");
+      }
+      expr = std::make_unique<UnaryOpNode>(expr->line, TOK_DEC, std::move(expr), true /* is_postfix */);
+    } else if (match(TOK_LBRACKET)) {
       auto index = parse_expr();
       expect(TOK_RBRACKET, "Expected ']' after array index");
       expr = std::make_unique<ArrayAccessNode>(expr->line, std::move(expr),
@@ -159,6 +235,19 @@ std::unique_ptr<ASTNode> Parser::parse_primary() {
 
 std::unique_ptr<ASTNode> Parser::parse_unary() {
   Token t = peek();
+  if (t.type == TOK_INC || t.type == TOK_DEC) {
+    lexer_->next();
+    auto expr = parse_unary();
+    bool valid_lvalue = (expr->getType() == ASTNodeType::Identifier) ||
+                        (expr->getType() == ASTNodeType::ArrayAccess) ||
+                        (expr->getType() == ASTNodeType::MemberAccess) ||
+                        (expr->getType() == ASTNodeType::UnaryOp &&
+                         static_cast<const UnaryOpNode *>(expr.get())->op == TOK_STAR);
+    if (!valid_lvalue) {
+      parse_error(t, "Operand of prefix ++/-- must be an lvalue");
+    }
+    return std::make_unique<UnaryOpNode>(t.line, t.type, std::move(expr), false /* is_postfix */);
+  }
   if (t.type == TOK_PLUS || t.type == TOK_MINUS || t.type == TOK_LOGIC_NOT ||
       t.type == TOK_TILDE || t.type == TOK_STAR || t.type == TOK_AMP) {
     lexer_->next();
@@ -204,6 +293,22 @@ std::unique_ptr<ASTNode> Parser::parse_conditional() {
 
 std::unique_ptr<ASTNode> Parser::parse_assignment() {
   auto left = parse_conditional();
+  Token t = peek();
+  TokenType compound_bin_op = TOK_UNKNOWN;
+  switch (t.type) {
+  case TOK_ADD_ASSIGN: compound_bin_op = TOK_PLUS; break;
+  case TOK_SUB_ASSIGN: compound_bin_op = TOK_MINUS; break;
+  case TOK_MUL_ASSIGN: compound_bin_op = TOK_STAR; break;
+  case TOK_DIV_ASSIGN: compound_bin_op = TOK_SLASH; break;
+  case TOK_MOD_ASSIGN: compound_bin_op = TOK_PERCENT; break;
+  case TOK_AND_ASSIGN: compound_bin_op = TOK_AMP; break;
+  case TOK_OR_ASSIGN:  compound_bin_op = TOK_PIPE; break;
+  case TOK_XOR_ASSIGN: compound_bin_op = TOK_CARET; break;
+  case TOK_SHL_ASSIGN: compound_bin_op = TOK_LSHIFT; break;
+  case TOK_SHR_ASSIGN: compound_bin_op = TOK_RSHIFT; break;
+  default: break;
+  }
+
   if (match(TOK_ASSIGN)) {
     bool valid_lvalue = (left->getType() == ASTNodeType::Identifier) ||
                         (left->getType() == ASTNodeType::ArrayAccess) ||
@@ -217,6 +322,23 @@ std::unique_ptr<ASTNode> Parser::parse_assignment() {
     auto right = parse_assignment();
     return std::make_unique<AssignNode>(left->line, std::move(left),
                                         std::move(right));
+  } else if (compound_bin_op != TOK_UNKNOWN) {
+    lexer_->next(); // consume compound operator
+    bool valid_lvalue = (left->getType() == ASTNodeType::Identifier) ||
+                        (left->getType() == ASTNodeType::ArrayAccess) ||
+                        (left->getType() == ASTNodeType::MemberAccess) ||
+                        (left->getType() == ASTNodeType::UnaryOp &&
+                         static_cast<const UnaryOpNode *>(left.get())->op == TOK_STAR);
+    if (!valid_lvalue) {
+      Token err_tok{TOK_UNKNOWN, "", left->line, 1, {0}};
+      parse_error(err_tok, "Left side of assignment must be an identifier, array element, member access, or dereference");
+    }
+    auto right = parse_assignment();
+    auto cloned_left = clone_ast(left.get());
+    auto bin_node = std::make_unique<BinaryOpNode>(left->line, compound_bin_op,
+                                                   std::move(cloned_left), std::move(right));
+    return std::make_unique<AssignNode>(left->line, std::move(left),
+                                        std::move(bin_node));
   }
   return left;
 }

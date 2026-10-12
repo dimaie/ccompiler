@@ -724,6 +724,41 @@ void ARM64CodeGenerator::visit(const UnaryOpNode &node) {
     return;
   }
 
+  if (node.op == TOK_INC || node.op == TOK_DEC) {
+    if (node.expr && node.expr->getType() == ASTNodeType::Identifier) {
+      auto *ident = static_cast<const IdentifierNode *>(node.expr.get());
+      auto it = var_offsets_.find(ident->name);
+      int offset = (it != var_offsets_.end()) ? it->second : 0;
+      bool is_global = (it == var_offsets_.end());
+      if (!is_global) {
+        emit_line("ldr x0, [x29, #" + std::to_string(offset) + "]");
+        if (node.is_postfix) {
+          emit_line("str x0, [sp, #-16]!");
+          emit_line(node.op == TOK_INC ? "add x0, x0, #1" : "sub x0, x0, #1");
+          emit_line("str x0, [x29, #" + std::to_string(offset) + "]");
+          emit_line("ldr x0, [sp], #16");
+        } else {
+          emit_line(node.op == TOK_INC ? "add x0, x0, #1" : "sub x0, x0, #1");
+          emit_line("str x0, [x29, #" + std::to_string(offset) + "]");
+        }
+      } else {
+        emit_line("adrp x1, " + ident->name);
+        emit_line("add x1, x1, :lo12:" + ident->name);
+        emit_line("ldr x0, [x1]");
+        if (node.is_postfix) {
+          emit_line("str x0, [sp, #-16]!");
+          emit_line(node.op == TOK_INC ? "add x0, x0, #1" : "sub x0, x0, #1");
+          emit_line("str x0, [x1]");
+          emit_line("ldr x0, [sp], #16");
+        } else {
+          emit_line(node.op == TOK_INC ? "add x0, x0, #1" : "sub x0, x0, #1");
+          emit_line("str x0, [x1]");
+        }
+      }
+      return;
+    }
+  }
+
   if (node.expr) {
     node.expr->accept(*this);
   }

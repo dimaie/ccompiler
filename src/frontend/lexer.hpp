@@ -108,7 +108,17 @@ enum TokenType {
   TOK_CARET,      /**< '^' Bitwise XOR */
   TOK_TILDE,      /**< '~' Bitwise NOT (one's complement) */
   TOK_LSHIFT,     /**< '<<' Bitwise left shift */
-  TOK_RSHIFT      /**< '>>' Bitwise right shift */
+  TOK_RSHIFT,     /**< '>>' Bitwise right shift */
+  TOK_ADD_ASSIGN, /**< '+=' Compound add assignment */
+  TOK_SUB_ASSIGN, /**< '-=' Compound subtract assignment */
+  TOK_MUL_ASSIGN, /**< '*=' Compound multiply assignment */
+  TOK_DIV_ASSIGN, /**< '/=' Compound divide assignment */
+  TOK_MOD_ASSIGN, /**< '%=' Compound modulo assignment */
+  TOK_AND_ASSIGN, /**< '&=' Compound bitwise AND assignment */
+  TOK_OR_ASSIGN,  /**< '|=' Compound bitwise OR assignment */
+  TOK_XOR_ASSIGN, /**< '^=' Compound bitwise XOR assignment */
+  TOK_SHL_ASSIGN, /**< '<<=' Compound left shift assignment */
+  TOK_SHR_ASSIGN  /**< '>>=' Compound right shift assignment */
 };
 
 /**

@@ -1,6 +1,8 @@
 #include <stdio.h>
 
 int main() {
-    puts("Hello, World! Running natively from CCompiler on Windows x86-64.");
-    return 0;
+  for (int i = 0; i < 5; i++) {
+    printf("iteration %d\n", i);
+  }
+  return 0;
 }

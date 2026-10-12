@@ -381,6 +381,59 @@ void IRBuilder::visit(const BinaryOpNode &node) {
 }
 
 void IRBuilder::visit(const UnaryOpNode &node) {
+  if (node.op == TOK_INC || node.op == TOK_DEC) {
+    if (node.expr && node.expr->getType() == ASTNodeType::Identifier) {
+      const auto *id = static_cast<const IdentifierNode *>(node.expr.get());
+      auto it = var_table_.find(id->name);
+      IROperand cur_val;
+      if (it != var_table_.end() && it->second.is_memory) {
+        cur_val = new_var();
+        IRInstruction load_inst;
+        load_inst.op = IROpKind::Load;
+        load_inst.dst = cur_val;
+        load_inst.src1 = it->second.op;
+        emit_instruction(load_inst);
+      } else if (it != var_table_.end()) {
+        cur_val = it->second.op;
+      } else {
+        cur_val = new_var();
+        var_table_[id->name] = {cur_val, false, false, 0};
+      }
+
+      IROperand old_val = new_var();
+      IRInstruction copy_old;
+      copy_old.op = IROpKind::Copy;
+      copy_old.dst = old_val;
+      copy_old.src1 = cur_val;
+      emit_instruction(copy_old);
+
+      IROperand new_val = new_var();
+      IRInstruction op_inst;
+      op_inst.op = (node.op == TOK_INC) ? IROpKind::Add : IROpKind::Sub;
+      op_inst.dst = new_val;
+      op_inst.src1 = cur_val;
+      op_inst.src2 = IROperand::imm(1);
+      emit_instruction(op_inst);
+
+      if (it != var_table_.end() && it->second.is_memory) {
+        IRInstruction store_inst;
+        store_inst.op = IROpKind::Store;
+        store_inst.dst = it->second.op;
+        store_inst.src1 = new_val;
+        emit_instruction(store_inst);
+      } else {
+        IRInstruction copy_back;
+        copy_back.op = IROpKind::Copy;
+        copy_back.dst = cur_val;
+        copy_back.src1 = new_val;
+        emit_instruction(copy_back);
+      }
+
+      last_expr_operand_ = node.is_postfix ? old_val : new_val;
+      return;
+    }
+  }
+
   IROperand operand = lower_expression(*node.expr);
   IROperand dst_op = new_var();
 

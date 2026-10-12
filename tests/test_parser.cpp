@@ -1851,6 +1851,127 @@ static void test_ternary_operator() {
   }
 }
 
+static void test_inc_dec_and_compound_assignments() {
+  std::cout << "Testing Inc/Dec and Compound Assignment operators...\n";
+
+  // 1. Postfix and Prefix ++ / --
+  {
+    auto prog = parse_source("i++;\n");
+    assert(prog->statements.size() == 1);
+    auto *un = static_cast<UnaryOpNode *>(prog->statements[0].get());
+    assert(un->op == TOK_INC);
+    assert(un->is_postfix == true);
+    assert(un->expr->getType() == ASTNodeType::Identifier);
+  }
+  {
+    auto prog = parse_source("++i;\n");
+    assert(prog->statements.size() == 1);
+    auto *un = static_cast<UnaryOpNode *>(prog->statements[0].get());
+    assert(un->op == TOK_INC);
+    assert(un->is_postfix == false);
+  }
+  {
+    auto prog = parse_source("i--;\n");
+    assert(prog->statements.size() == 1);
+    auto *un = static_cast<UnaryOpNode *>(prog->statements[0].get());
+    assert(un->op == TOK_DEC);
+    assert(un->is_postfix == true);
+  }
+  {
+    auto prog = parse_source("--i;\n");
+    assert(prog->statements.size() == 1);
+    auto *un = static_cast<UnaryOpNode *>(prog->statements[0].get());
+    assert(un->op == TOK_DEC);
+    assert(un->is_postfix == false);
+  }
+
+  // 2. In for loop step
+  {
+    auto prog = parse_source("for (int i = 0; i < 10; i++) { x += i; }\n");
+    assert(prog->statements.size() == 1);
+    auto *for_node = static_cast<ForNode *>(prog->statements[0].get());
+    assert(for_node->step != nullptr);
+    assert(for_node->step->getType() == ASTNodeType::UnaryOp);
+    auto *step_un = static_cast<UnaryOpNode *>(for_node->step.get());
+    assert(step_un->op == TOK_INC);
+    assert(step_un->is_postfix == true);
+  }
+
+  // 3. Compound assignments (desugared into AssignNode)
+  {
+    auto prog = parse_source("x += 5;\n");
+    assert(prog->statements.size() == 1);
+    auto *as = static_cast<AssignNode *>(prog->statements[0].get());
+    assert(as->left->getType() == ASTNodeType::Identifier);
+    assert(as->right->getType() == ASTNodeType::BinaryOp);
+    auto *bin = static_cast<BinaryOpNode *>(as->right.get());
+    assert(bin->op == TOK_PLUS);
+  }
+  {
+    auto prog = parse_source("x *= 2;\n");
+    auto *as = static_cast<AssignNode *>(prog->statements[0].get());
+    auto *bin = static_cast<BinaryOpNode *>(as->right.get());
+    assert(bin->op == TOK_STAR);
+  }
+  {
+    auto prog = parse_source("x -= 3;\n");
+    auto *as = static_cast<AssignNode *>(prog->statements[0].get());
+    auto *bin = static_cast<BinaryOpNode *>(as->right.get());
+    assert(bin->op == TOK_MINUS);
+  }
+  {
+    auto prog = parse_source("x /= 4;\n");
+    auto *as = static_cast<AssignNode *>(prog->statements[0].get());
+    auto *bin = static_cast<BinaryOpNode *>(as->right.get());
+    assert(bin->op == TOK_SLASH);
+  }
+  {
+    auto prog = parse_source("x %= 2;\n");
+    auto *as = static_cast<AssignNode *>(prog->statements[0].get());
+    auto *bin = static_cast<BinaryOpNode *>(as->right.get());
+    assert(bin->op == TOK_PERCENT);
+  }
+  {
+    auto prog = parse_source("x &= 0xFF;\n");
+    auto *as = static_cast<AssignNode *>(prog->statements[0].get());
+    auto *bin = static_cast<BinaryOpNode *>(as->right.get());
+    assert(bin->op == TOK_AMP);
+  }
+  {
+    auto prog = parse_source("x |= 0x80;\n");
+    auto *as = static_cast<AssignNode *>(prog->statements[0].get());
+    auto *bin = static_cast<BinaryOpNode *>(as->right.get());
+    assert(bin->op == TOK_PIPE);
+  }
+  {
+    auto prog = parse_source("x ^= 1;\n");
+    auto *as = static_cast<AssignNode *>(prog->statements[0].get());
+    auto *bin = static_cast<BinaryOpNode *>(as->right.get());
+    assert(bin->op == TOK_CARET);
+  }
+  {
+    auto prog = parse_source("x <<= 2;\n");
+    auto *as = static_cast<AssignNode *>(prog->statements[0].get());
+    auto *bin = static_cast<BinaryOpNode *>(as->right.get());
+    assert(bin->op == TOK_LSHIFT);
+  }
+  {
+    auto prog = parse_source("x >>= 1;\n");
+    auto *as = static_cast<AssignNode *>(prog->statements[0].get());
+    auto *bin = static_cast<BinaryOpNode *>(as->right.get());
+    assert(bin->op == TOK_RSHIFT);
+  }
+
+  // 4. Postfix on array and member access
+  {
+    auto prog = parse_source("arr[i]++;\n");
+    auto *un = static_cast<UnaryOpNode *>(prog->statements[0].get());
+    assert(un->op == TOK_INC);
+    assert(un->is_postfix == true);
+    assert(un->expr->getType() == ASTNodeType::ArrayAccess);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running AST & Parser Test Suite\n";
@@ -1889,9 +2010,10 @@ int main() {
   test_inline_asm();
   test_calling_conventions();
   test_ternary_operator();
+  test_inc_dec_and_compound_assignments();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (33/33)\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (34/34)\n";
   std::cout << "========================================\n";
   return 0;
 }

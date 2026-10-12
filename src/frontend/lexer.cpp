@@ -434,7 +434,13 @@ Token Lexer::scan_token() {
     tok.type = TOK_TILDE;
     break;
   case '^':
-    tok.type = TOK_CARET;
+    if (peek_char() == '=') {
+      advance_char();
+      std::snprintf(tok.text, sizeof(tok.text), "^=");
+      tok.type = TOK_XOR_ASSIGN;
+    } else {
+      tok.type = TOK_CARET;
+    }
     break;
 
   case '+':
@@ -442,6 +448,10 @@ Token Lexer::scan_token() {
       advance_char();
       std::snprintf(tok.text, sizeof(tok.text), "++");
       tok.type = TOK_INC;
+    } else if (peek_char() == '=') {
+      advance_char();
+      std::snprintf(tok.text, sizeof(tok.text), "+=");
+      tok.type = TOK_ADD_ASSIGN;
     } else {
       tok.type = TOK_PLUS;
     }
@@ -456,6 +466,10 @@ Token Lexer::scan_token() {
       advance_char();
       std::snprintf(tok.text, sizeof(tok.text), "->");
       tok.type = TOK_ARROW;
+    } else if (peek_char() == '=') {
+      advance_char();
+      std::snprintf(tok.text, sizeof(tok.text), "-=");
+      tok.type = TOK_SUB_ASSIGN;
     } else {
       tok.type = TOK_MINUS;
     }
@@ -484,8 +498,14 @@ Token Lexer::scan_token() {
   case '<':
     if (peek_char() == '<') {
       advance_char();
-      std::snprintf(tok.text, sizeof(tok.text), "<<");
-      tok.type = TOK_LSHIFT;
+      if (peek_char() == '=') {
+        advance_char();
+        std::snprintf(tok.text, sizeof(tok.text), "<<=");
+        tok.type = TOK_SHL_ASSIGN;
+      } else {
+        std::snprintf(tok.text, sizeof(tok.text), "<<");
+        tok.type = TOK_LSHIFT;
+      }
     } else if (peek_char() == '=') {
       advance_char();
       std::snprintf(tok.text, sizeof(tok.text), "<=");
@@ -498,8 +518,14 @@ Token Lexer::scan_token() {
   case '>':
     if (peek_char() == '>') {
       advance_char();
-      std::snprintf(tok.text, sizeof(tok.text), ">>");
-      tok.type = TOK_RSHIFT;
+      if (peek_char() == '=') {
+        advance_char();
+        std::snprintf(tok.text, sizeof(tok.text), ">>=");
+        tok.type = TOK_SHR_ASSIGN;
+      } else {
+        std::snprintf(tok.text, sizeof(tok.text), ">>");
+        tok.type = TOK_RSHIFT;
+      }
     } else if (peek_char() == '=') {
       advance_char();
       std::snprintf(tok.text, sizeof(tok.text), ">=");
@@ -514,6 +540,10 @@ Token Lexer::scan_token() {
       advance_char();
       std::snprintf(tok.text, sizeof(tok.text), "&&");
       tok.type = TOK_LOGIC_AND;
+    } else if (peek_char() == '=') {
+      advance_char();
+      std::snprintf(tok.text, sizeof(tok.text), "&=");
+      tok.type = TOK_AND_ASSIGN;
     } else {
       tok.type = TOK_AMP;
     }
@@ -524,19 +554,41 @@ Token Lexer::scan_token() {
       advance_char();
       std::snprintf(tok.text, sizeof(tok.text), "||");
       tok.type = TOK_LOGIC_OR;
+    } else if (peek_char() == '=') {
+      advance_char();
+      std::snprintf(tok.text, sizeof(tok.text), "|=");
+      tok.type = TOK_OR_ASSIGN;
     } else {
       tok.type = TOK_PIPE;
     }
     break;
 
   case '*':
-    tok.type = TOK_STAR;
+    if (peek_char() == '=') {
+      advance_char();
+      std::snprintf(tok.text, sizeof(tok.text), "*=");
+      tok.type = TOK_MUL_ASSIGN;
+    } else {
+      tok.type = TOK_STAR;
+    }
     break;
   case '/':
-    tok.type = TOK_SLASH;
+    if (peek_char() == '=') {
+      advance_char();
+      std::snprintf(tok.text, sizeof(tok.text), "/=");
+      tok.type = TOK_DIV_ASSIGN;
+    } else {
+      tok.type = TOK_SLASH;
+    }
     break;
   case '%':
-    tok.type = TOK_PERCENT;
+    if (peek_char() == '=') {
+      advance_char();
+      std::snprintf(tok.text, sizeof(tok.text), "%%=");
+      tok.type = TOK_MOD_ASSIGN;
+    } else {
+      tok.type = TOK_PERCENT;
+    }
     break;
   case '.':
     if (peek_char() == '.' && peek_next_char() == '.') {
@@ -682,6 +734,26 @@ const char *token_name(TokenType t) {
     return "<<";
   case TOK_RSHIFT:
     return ">>";
+  case TOK_ADD_ASSIGN:
+    return "+=";
+  case TOK_SUB_ASSIGN:
+    return "-=";
+  case TOK_MUL_ASSIGN:
+    return "*=";
+  case TOK_DIV_ASSIGN:
+    return "/=";
+  case TOK_MOD_ASSIGN:
+    return "%=";
+  case TOK_AND_ASSIGN:
+    return "&=";
+  case TOK_OR_ASSIGN:
+    return "|=";
+  case TOK_XOR_ASSIGN:
+    return "^=";
+  case TOK_SHL_ASSIGN:
+    return "<<=";
+  case TOK_SHR_ASSIGN:
+    return ">>=";
   default:
     return "<UNKNOWN>";
   }

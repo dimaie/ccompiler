@@ -962,6 +962,41 @@ void AVRCodeGenerator::visit(const UnaryOpNode &node) {
     return;
   }
 
+  if (node.op == TOK_INC || node.op == TOK_DEC) {
+    if (node.expr && node.expr->getType() == ASTNodeType::Identifier) {
+      auto *ident = static_cast<const IdentifierNode *>(node.expr.get());
+      if (node.expr) {
+        node.expr->accept(*this);
+      }
+      if (node.is_postfix) {
+        emit_line("push r25");
+        emit_line("push r24");
+      }
+      if (node.op == TOK_INC) {
+        emit_line("adiw r24, 1");
+      } else {
+        emit_line("sbiw r24, 1");
+      }
+      if (is_memory_mode()) {
+        std::string sym = get_var_symbol(ident->name);
+        emit_line("sts " + sym + ", r24");
+        emit_line("sts " + sym + "+1, r25");
+      } else {
+        auto it = var_offsets_.find(ident->name);
+        if (it != var_offsets_.end()) {
+          int offset = it->second;
+          emit_line("std Y+" + std::to_string(offset) + ", r24");
+          emit_line("std Y+" + std::to_string(offset + 1) + ", r25");
+        }
+      }
+      if (node.is_postfix) {
+        emit_line("pop r24");
+        emit_line("pop r25");
+      }
+      return;
+    }
+  }
+
   if (node.expr) {
     node.expr->accept(*this);
   }
