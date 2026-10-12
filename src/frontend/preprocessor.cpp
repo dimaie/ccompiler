@@ -166,7 +166,7 @@ public:
   int64_t parse() {
     skip_ws();
     if (pos_ >= s_.size()) return 0;
-    int64_t val = parse_logical_or();
+    int64_t val = parse_conditional();
     return val;
   }
 
@@ -177,6 +177,22 @@ private:
 
   void skip_ws() {
     while (pos_ < s_.size() && std::isspace(static_cast<unsigned char>(s_[pos_]))) pos_++;
+  }
+
+  int64_t parse_conditional() {
+    int64_t cond = parse_logical_or();
+    skip_ws();
+    if (pos_ < s_.size() && s_[pos_] == '?') {
+      pos_++;
+      int64_t then_val = parse_conditional();
+      skip_ws();
+      if (pos_ < s_.size() && s_[pos_] == ':') {
+        pos_++;
+      }
+      int64_t else_val = parse_conditional();
+      return cond ? then_val : else_val;
+    }
+    return cond;
   }
 
   int64_t parse_logical_or() {

@@ -83,6 +83,7 @@ enum TokenType {
   TOK_ELLIPSIS,  /**< '...' Variadic arguments ellipsis */
   TOK_ARROW,     /**< '->' Structure pointer member access */
   TOK_HASH,      /**< '#' Preprocessor directive marker */
+  TOK_QUESTION,  /**< '?' Conditional operator */
 
   /* Operators */
   TOK_ASSIGN,     /**< '=' Assignment operator */

@@ -197,6 +197,29 @@ static void test_ir_local_var_storage_modes() {
   }
 }
 
+static void test_ir_ternary_lowering() {
+  std::cout << "Testing IR Ternary Lowering...\n";
+
+  auto prog = parse("int main() {\n"
+                    "  int a = 10;\n"
+                    "  int b = a > 5 ? 1 : 2;\n"
+                    "  return b;\n"
+                    "}\n");
+  IRBuilder builder(TargetInfo::get(TargetArch::X86_64));
+  IRModule mod = builder.build(*prog);
+
+  std::ostringstream ss;
+  mod.print(ss);
+  std::string out = ss.str();
+
+  // Verify that BranchIf, labels, and jumps are generated for the ternary expression
+  assert(out.find("br_if") != std::string::npos);
+  assert(out.find("tern_then") != std::string::npos);
+  assert(out.find("tern_else") != std::string::npos);
+  assert(out.find("tern_end") != std::string::npos);
+  assert(out.find("jump") != std::string::npos);
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Intermediate Stage (IR) Tests\n";
@@ -208,6 +231,7 @@ int main() {
   test_ir_short_circuit_lowering();
   test_ir_pretty_printing();
   test_ir_local_var_storage_modes();
+  test_ir_ternary_lowering();
 
   std::cout << "========================================\n";
   std::cout << "  ALL IR TESTS PASSED!\n";

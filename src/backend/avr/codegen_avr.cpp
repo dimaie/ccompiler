@@ -1119,6 +1119,29 @@ void AVRCodeGenerator::visit(const BinaryOpNode &node) {
   }
 }
 
+void AVRCodeGenerator::visit(const TernaryOpNode &node) {
+  emit_loc(node.line, node.file_id);
+  std::string else_lbl = new_label(".Lavr_tern_else");
+  std::string end_lbl = new_label(".Lavr_tern_end");
+
+  if (node.cond) {
+    node.cond->accept(*this);
+  }
+  emit_line("sbiw r24, 0");
+  emit_line("breq " + else_lbl);
+
+  if (node.then_expr) {
+    node.then_expr->accept(*this);
+  }
+  emit_line("rjmp " + end_lbl);
+
+  emit_raw(else_lbl + ":");
+  if (node.else_expr) {
+    node.else_expr->accept(*this);
+  }
+  emit_raw(end_lbl + ":");
+}
+
 void AVRCodeGenerator::visit(const IfNode &node) {
   emit_loc(node.line, node.file_id);
   std::string else_lbl = new_label(".Lif_else");

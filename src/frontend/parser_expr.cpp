@@ -189,8 +189,21 @@ std::unique_ptr<ASTNode> Parser::parse_expr_precedence(int min_prec) {
   return left;
 }
 
+std::unique_ptr<ASTNode> Parser::parse_conditional() {
+  auto cond = parse_expr_precedence(1);
+  if (match(TOK_QUESTION)) {
+    auto then_expr = parse_expr();
+    expect(TOK_COLON, "Expected ':' in conditional expression");
+    auto else_expr = parse_conditional();
+    return std::make_unique<TernaryOpNode>(cond->line, std::move(cond),
+                                           std::move(then_expr),
+                                           std::move(else_expr));
+  }
+  return cond;
+}
+
 std::unique_ptr<ASTNode> Parser::parse_assignment() {
-  auto left = parse_expr_precedence(1);
+  auto left = parse_conditional();
   if (match(TOK_ASSIGN)) {
     bool valid_lvalue = (left->getType() == ASTNodeType::Identifier) ||
                         (left->getType() == ASTNodeType::ArrayAccess) ||

@@ -76,6 +76,7 @@ private:
 
   // Expression parsing helpers (parser_expr.cpp)
   std::unique_ptr<ASTNode> parse_assignment();
+  std::unique_ptr<ASTNode> parse_conditional();
   std::unique_ptr<ASTNode> parse_expr_precedence(int min_prec);
   std::unique_ptr<ASTNode> parse_unary();
   std::unique_ptr<ASTNode> parse_primary();

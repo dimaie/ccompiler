@@ -421,6 +421,9 @@ Token Lexer::scan_token() {
   case ':':
     tok.type = TOK_COLON;
     break;
+  case '?':
+    tok.type = TOK_QUESTION;
+    break;
   case ',':
     tok.type = TOK_COMMA;
     break;
@@ -620,6 +623,8 @@ const char *token_name(TokenType t) {
     return ";";
   case TOK_COLON:
     return ":";
+  case TOK_QUESTION:
+    return "?";
   case TOK_COMMA:
     return ",";
   case TOK_DOT:

@@ -119,7 +119,10 @@ expr
 
 assignment
     ::= ( IDENTIFIER | array_access | member_access | deref_expr ) "=" assignment
-      | logical_or ;
+      | conditional ;
+
+conditional
+    ::= logical_or ( "?" expr ":" conditional )? ;
 
 deref_expr
     ::= "*" unary

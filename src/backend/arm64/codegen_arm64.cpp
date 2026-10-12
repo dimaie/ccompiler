@@ -838,6 +838,28 @@ void ARM64CodeGenerator::visit(const BinaryOpNode &node) {
   }
 }
 
+void ARM64CodeGenerator::visit(const TernaryOpNode &node) {
+  emit_loc(node.line, node.file_id);
+  std::string else_lbl = new_label(".Larm_tern_else");
+  std::string end_lbl = new_label(".Larm_tern_end");
+
+  if (node.cond) {
+    node.cond->accept(*this);
+  }
+  emit_line("cbz x0, " + else_lbl);
+
+  if (node.then_expr) {
+    node.then_expr->accept(*this);
+  }
+  emit_line("b " + end_lbl);
+
+  emit_raw(else_lbl + ":");
+  if (node.else_expr) {
+    node.else_expr->accept(*this);
+  }
+  emit_raw(end_lbl + ":");
+}
+
 void ARM64CodeGenerator::visit(const IfNode &node) {
   emit_loc(node.line, node.file_id);
   std::string else_lbl = new_label(".Larm_if_else");

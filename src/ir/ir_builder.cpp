@@ -402,6 +402,61 @@ void IRBuilder::visit(const UnaryOpNode &node) {
   last_expr_operand_ = dst_op;
 }
 
+void IRBuilder::visit(const TernaryOpNode &node) {
+  IROperand res_var = new_var();
+  std::string then_lbl = new_label("tern_then");
+  std::string else_lbl = new_label("tern_else");
+  std::string end_lbl = new_label("tern_end");
+
+  IROperand cond_op = lower_expression(*node.cond);
+
+  IRInstruction br;
+  br.op = IROpKind::BranchIf;
+  br.src1 = cond_op;
+  br.dst = IROperand::label(then_lbl);
+  br.src2 = IROperand::label(else_lbl);
+  emit_instruction(br);
+
+  // Then branch
+  IRInstruction lbl_then;
+  lbl_then.op = IROpKind::Label;
+  lbl_then.dst = IROperand::label(then_lbl);
+  emit_instruction(lbl_then);
+
+  IROperand then_op = lower_expression(*node.then_expr);
+  IRInstruction copy_then;
+  copy_then.op = IROpKind::Copy;
+  copy_then.dst = res_var;
+  copy_then.src1 = then_op;
+  emit_instruction(copy_then);
+
+  IRInstruction jmp_end;
+  jmp_end.op = IROpKind::Jump;
+  jmp_end.dst = IROperand::label(end_lbl);
+  emit_instruction(jmp_end);
+
+  // Else branch
+  IRInstruction lbl_else;
+  lbl_else.op = IROpKind::Label;
+  lbl_else.dst = IROperand::label(else_lbl);
+  emit_instruction(lbl_else);
+
+  IROperand else_op = lower_expression(*node.else_expr);
+  IRInstruction copy_else;
+  copy_else.op = IROpKind::Copy;
+  copy_else.dst = res_var;
+  copy_else.src1 = else_op;
+  emit_instruction(copy_else);
+
+  // End label
+  IRInstruction lbl_end;
+  lbl_end.op = IROpKind::Label;
+  lbl_end.dst = IROperand::label(end_lbl);
+  emit_instruction(lbl_end);
+
+  last_expr_operand_ = res_var;
+}
+
 void IRBuilder::visit(const CallNode &node) {
   std::vector<IROperand> arg_ops;
   for (const auto &arg : node.args) {

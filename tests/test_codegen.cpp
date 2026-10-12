@@ -1828,6 +1828,24 @@ static void test_command_line_parser() {
     assert(ok);
     assert(cfg_win.linker.subsystem == WindowsSubsystem::GUI);
 
+    CompilerConfig cfg_gui;
+    std::vector<std::string> args_gui = {"--gui", "main.c"};
+    bool ok_gui = parser.parse(args_gui, cfg_gui, err, help);
+    assert(ok_gui);
+    assert(cfg_gui.linker.subsystem == WindowsSubsystem::GUI);
+
+    CompilerConfig cfg_mgui;
+    std::vector<std::string> args_mgui = {"-mgui", "main.c"};
+    bool ok_mgui = parser.parse(args_mgui, cfg_mgui, err, help);
+    assert(ok_mgui);
+    assert(cfg_mgui.linker.subsystem == WindowsSubsystem::GUI);
+
+    CompilerConfig cfg_msvc;
+    std::vector<std::string> args_msvc = {"/subsystem:windows", "main.c"};
+    bool ok_msvc = parser.parse(args_msvc, cfg_msvc, err, help);
+    assert(ok_msvc);
+    assert(cfg_msvc.linker.subsystem == WindowsSubsystem::GUI);
+
     CompilerConfig cfg_con;
     std::vector<std::string> args2 = {"--subsystem=console", "main.c"};
     bool ok2 = parser.parse(args2, cfg_con, err, help);
@@ -2167,6 +2185,56 @@ static void test_debug_information_codegen() {
   }
 }
 
+static void test_ternary_codegen() {
+  std::cout << "Testing Ternary Code Generation across all backends...\n";
+
+  const char *src = "int max(int a, int b) {\n"
+                    "  return a > b ? a : b;\n"
+                    "}\n"
+                    "int sign(int x) {\n"
+                    "  return x > 0 ? 1 : x < 0 ? -1 : 0;\n"
+                    "}\n";
+
+  auto prog = parse(src);
+
+  // 1. x86_64
+  {
+    auto gen = CodeGeneratorFactory::create(TargetArch::X86_64);
+    std::string code = gen->generate_to_string(*prog);
+    assert(code.find(".Ltern_else") != std::string::npos);
+    assert(code.find(".Ltern_end") != std::string::npos);
+    assert(code.find("cmpq $0, %rax") != std::string::npos);
+    assert(code.find("je ") != std::string::npos);
+  }
+
+  // 2. ARM64
+  {
+    auto gen = CodeGeneratorFactory::create(TargetArch::ARM64);
+    std::string code = gen->generate_to_string(*prog);
+    assert(code.find(".Larm_tern_else") != std::string::npos);
+    assert(code.find(".Larm_tern_end") != std::string::npos);
+    assert(code.find("cbz x0, ") != std::string::npos);
+  }
+
+  // 3. AVR
+  {
+    auto gen = CodeGeneratorFactory::create(TargetArch::AVR);
+    std::string code = gen->generate_to_string(*prog);
+    assert(code.find(".Lavr_tern_else") != std::string::npos);
+    assert(code.find(".Lavr_tern_end") != std::string::npos);
+    assert(code.find("sbiw r24, 0") != std::string::npos);
+    assert(code.find("breq ") != std::string::npos);
+  }
+
+  // 4. C transpiler
+  {
+    auto gen = CodeGeneratorFactory::create(TargetArch::C_Transpiler);
+    std::string code = gen->generate_to_string(*prog);
+    assert(code.find(" ? ") != std::string::npos);
+    assert(code.find(" : ") != std::string::npos);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Code Generator Test Suite\n";
@@ -2194,9 +2262,10 @@ int main() {
   test_command_line_parser();
   test_multi_module_compilation_and_linking();
   test_debug_information_codegen();
+  test_ternary_codegen();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL CODEGEN TESTS PASSED! (22/22)\n";
+  std::cout << "  ALL CODEGEN TESTS PASSED! (23/23)\n";
   std::cout << "========================================\n";
   return 0;
 }

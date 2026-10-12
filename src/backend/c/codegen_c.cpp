@@ -336,6 +336,16 @@ void CCodeGenerator::visit(const BinaryOpNode &node) {
   *out_ << ")";
 }
 
+void CCodeGenerator::visit(const TernaryOpNode &node) {
+  *out_ << "(";
+  if (node.cond) node.cond->accept(*this);
+  *out_ << " ? ";
+  if (node.then_expr) node.then_expr->accept(*this);
+  *out_ << " : ";
+  if (node.else_expr) node.else_expr->accept(*this);
+  *out_ << ")";
+}
+
 void CCodeGenerator::visit(const IfNode &node) {
   *out_ << "if (";
   if (node.cond) node.cond->accept(*this);

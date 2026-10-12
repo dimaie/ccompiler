@@ -140,6 +140,22 @@ DataType X86_64CodeGenerator::get_expr_type(const ASTNode *expr, int &pointer_le
     pointer_level = 1;
     return DataType::Char;
   }
+  if (expr->getType() == ASTNodeType::TernaryOp) {
+    const auto *t = static_cast<const TernaryOpNode *>(expr);
+    int then_ptr = 0;
+    DataType then_type = get_expr_type(t->then_expr.get(), then_ptr);
+    if (then_ptr > 0) {
+      pointer_level = then_ptr;
+      return then_type;
+    }
+    int else_ptr = 0;
+    DataType else_type = get_expr_type(t->else_expr.get(), else_ptr);
+    if (else_ptr > 0) {
+      pointer_level = else_ptr;
+      return else_type;
+    }
+    return then_type;
+  }
   return DataType::Int;
 }
 
@@ -1450,6 +1466,29 @@ void X86_64CodeGenerator::visit(const BinaryOpNode &node) {
   default:
     unsupported("Binary operator '" + std::string(token_op_str(node.op)) + "'", node.line);
   }
+}
+
+void X86_64CodeGenerator::visit(const TernaryOpNode &node) {
+  emit_loc(node.line, node.file_id);
+  std::string else_lbl = new_label(".Ltern_else");
+  std::string end_lbl = new_label(".Ltern_end");
+
+  if (node.cond) {
+    node.cond->accept(*this);
+  }
+  emit_line("cmpq $0, %rax");
+  emit_line("je " + else_lbl);
+
+  if (node.then_expr) {
+    node.then_expr->accept(*this);
+  }
+  emit_line("jmp " + end_lbl);
+
+  emit_raw(else_lbl + ":");
+  if (node.else_expr) {
+    node.else_expr->accept(*this);
+  }
+  emit_raw(end_lbl + ":");
 }
 
 void X86_64CodeGenerator::visit(const IfNode &node) {

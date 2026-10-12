@@ -1738,6 +1738,119 @@ static void test_calling_conventions() {
   }
 }
 
+static void test_ternary_operator() {
+  std::cout << "Testing TernaryOperator...\n";
+
+  // 1. Basic ternary in return statement
+  {
+    auto prog = parse_source("return x ? 1 : 2;\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::Return);
+    auto *ret = static_cast<ReturnNode *>(prog->statements[0].get());
+    assert(ret->expr->getType() == ASTNodeType::TernaryOp);
+    auto *tern = static_cast<TernaryOpNode *>(ret->expr.get());
+    assert(tern->cond->getType() == ASTNodeType::Identifier);
+    assert(tern->then_expr->getType() == ASTNodeType::IntLit);
+    assert(tern->else_expr->getType() == ASTNodeType::IntLit);
+    assert(static_cast<IntLitNode *>(tern->then_expr.get())->val == 1);
+    assert(static_cast<IntLitNode *>(tern->else_expr.get())->val == 2);
+  }
+
+  // 2. Ternary in variable declaration initializer
+  {
+    auto prog = parse_source("int y = a > 0 ? 10 : 20;\n");
+    assert(prog->statements.size() == 1);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->init->getType() == ASTNodeType::TernaryOp);
+    auto *tern = static_cast<TernaryOpNode *>(var->init.get());
+    assert(tern->cond->getType() == ASTNodeType::BinaryOp);
+    assert(static_cast<BinaryOpNode *>(tern->cond.get())->op == TOK_GREATER);
+    assert(static_cast<IntLitNode *>(tern->then_expr.get())->val == 10);
+    assert(static_cast<IntLitNode *>(tern->else_expr.get())->val == 20);
+  }
+
+  // 3. Right associativity of ternary operator: a ? b : c ? d : e -> a ? b : (c ? d : e)
+  {
+    auto prog = parse_source("return a ? b : c ? d : e;\n");
+    auto *ret = static_cast<ReturnNode *>(prog->statements[0].get());
+    assert(ret->expr->getType() == ASTNodeType::TernaryOp);
+    auto *t1 = static_cast<TernaryOpNode *>(ret->expr.get());
+    assert(static_cast<IdentifierNode *>(t1->cond.get())->name == "a");
+    assert(static_cast<IdentifierNode *>(t1->then_expr.get())->name == "b");
+    assert(t1->else_expr->getType() == ASTNodeType::TernaryOp);
+    auto *t2 = static_cast<TernaryOpNode *>(t1->else_expr.get());
+    assert(static_cast<IdentifierNode *>(t2->cond.get())->name == "c");
+    assert(static_cast<IdentifierNode *>(t2->then_expr.get())->name == "d");
+    assert(static_cast<IdentifierNode *>(t2->else_expr.get())->name == "e");
+  }
+
+  // 4. Nested in then-branch: a ? b ? c : d : e
+  {
+    auto prog = parse_source("return a ? b ? c : d : e;\n");
+    auto *ret = static_cast<ReturnNode *>(prog->statements[0].get());
+    auto *t1 = static_cast<TernaryOpNode *>(ret->expr.get());
+    assert(t1->then_expr->getType() == ASTNodeType::TernaryOp);
+    auto *t_then = static_cast<TernaryOpNode *>(t1->then_expr.get());
+    assert(static_cast<IdentifierNode *>(t_then->cond.get())->name == "b");
+    assert(static_cast<IdentifierNode *>(t_then->then_expr.get())->name == "c");
+    assert(static_cast<IdentifierNode *>(t_then->else_expr.get())->name == "d");
+    assert(static_cast<IdentifierNode *>(t1->else_expr.get())->name == "e");
+  }
+
+  // 5. Ternary with assignment
+  {
+    auto prog = parse_source("x = flag ? val1 : val2;\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::Assign);
+    auto *assign = static_cast<AssignNode *>(prog->statements[0].get());
+    assert(assign->right->getType() == ASTNodeType::TernaryOp);
+  }
+
+  // 6. Ternary inside function call
+  {
+    auto prog = parse_source("foo(cond ? 1 : 2, 3);\n");
+    assert(prog->statements.size() == 1);
+    assert(prog->statements[0]->getType() == ASTNodeType::Call);
+    auto *call = static_cast<CallNode *>(prog->statements[0].get());
+    assert(call->args.size() == 2);
+    assert(call->args[0]->getType() == ASTNodeType::TernaryOp);
+    assert(call->args[1]->getType() == ASTNodeType::IntLit);
+  }
+
+  // 7. Preprocessor with ternary operator
+  {
+    Preprocessor pp;
+    std::string src = "#if 1 ? 1 : 0\n"
+                      "int included = 1;\n"
+                      "#else\n"
+                      "int excluded = 0;\n"
+                      "#endif\n";
+    std::string out = pp.process(src);
+    assert(out.find("included") != std::string::npos);
+    assert(out.find("excluded") == std::string::npos);
+
+    std::string src2 = "#if 0 ? 1 : 0\n"
+                       "int excluded = 0;\n"
+                       "#else\n"
+                       "int included = 1;\n"
+                       "#endif\n";
+    std::string out2 = pp.process(src2);
+    assert(out2.find("included") != std::string::npos);
+    assert(out2.find("excluded") == std::string::npos);
+  }
+
+  // 8. Syntax error: missing colon
+  {
+    bool threw = false;
+    try {
+      parse_source("return a ? b;\n");
+    } catch (const ParseException &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running AST & Parser Test Suite\n";
@@ -1775,9 +1888,10 @@ int main() {
   test_preprocessor();
   test_inline_asm();
   test_calling_conventions();
+  test_ternary_operator();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (32/32)\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (33/33)\n";
   std::cout << "========================================\n";
   return 0;
 }

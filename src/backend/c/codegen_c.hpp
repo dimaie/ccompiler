@@ -44,6 +44,7 @@ public:
   void visit(const StructDefNode &node) override;
   void visit(const MemberAccessNode &node) override;
   void visit(const AsmStmtNode &node) override;
+  void visit(const TernaryOpNode &node) override;
 
 private:
   std::ostream *out_{nullptr};

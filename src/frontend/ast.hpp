@@ -35,7 +35,8 @@ enum class ASTNodeType {
   Identifier,
   StructDef,
   MemberAccess,
-  AsmStmt
+  AsmStmt,
+  TernaryOp
 };
 
 enum class DataType {
@@ -156,6 +157,7 @@ class IdentifierNode;
 class StructDefNode;
 class MemberAccessNode;
 class AsmStmtNode;
+class TernaryOpNode;
 
 /**
  * @brief Abstract Visitor interface for AST operations (codegen, analysis, etc.)
@@ -191,6 +193,7 @@ public:
   virtual void visit(const StructDefNode &node) = 0;
   virtual void visit(const MemberAccessNode &node) = 0;
   virtual void visit(const AsmStmtNode &node) = 0;
+  virtual void visit(const TernaryOpNode &node) = 0;
 };
 
 class ASTNode {
@@ -743,6 +746,42 @@ public:
     std::cout << "UnaryOp (" << token_op_str(op) << ")\n";
     if (expr) {
       expr->print(indent + 1);
+    }
+  }
+};
+
+class TernaryOpNode : public ASTNode {
+public:
+  std::unique_ptr<ASTNode> cond;
+  std::unique_ptr<ASTNode> then_expr;
+  std::unique_ptr<ASTNode> else_expr;
+
+  TernaryOpNode(int line, std::unique_ptr<ASTNode> cond,
+                std::unique_ptr<ASTNode> then_expr,
+                std::unique_ptr<ASTNode> else_expr)
+      : ASTNode(line), cond(std::move(cond)),
+        then_expr(std::move(then_expr)), else_expr(std::move(else_expr)) {}
+
+  ASTNodeType getType() const override { return ASTNodeType::TernaryOp; }
+  void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
+
+  void print(int indent = 0) const override {
+    print_indent(indent);
+    std::cout << "TernaryOp (?:)\n";
+    print_indent(indent + 1);
+    std::cout << "[Condition]\n";
+    if (cond) {
+      cond->print(indent + 2);
+    }
+    print_indent(indent + 1);
+    std::cout << "[Then]\n";
+    if (then_expr) {
+      then_expr->print(indent + 2);
+    }
+    print_indent(indent + 1);
+    std::cout << "[Else]\n";
+    if (else_expr) {
+      else_expr->print(indent + 2);
     }
   }
 };

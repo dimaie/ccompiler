@@ -152,3 +152,7 @@ void ICodeGenerator::visit(const AsmStmtNode &node) {
   unsupported(node, "inline assembly");
 }
 
+void ICodeGenerator::visit(const TernaryOpNode &node) {
+  unsupported(node, "ternary operator");
+}
+
