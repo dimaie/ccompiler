@@ -13,15 +13,29 @@ CallingConvention Parser::parse_calling_convention() {
 }
 
 bool Parser::is_type_specifier(TokenType type) const {
+  if (type == TOK_IDENTIFIER) {
+    Token t = const_cast<Parser *>(this)->peek();
+    return typedefs_.find(t.text) != typedefs_.end();
+  }
   return type == TOK_KW_INT || type == TOK_KW_SHORT || type == TOK_KW_LONG ||
          type == TOK_KW_CHAR || type == TOK_KW_VOID || type == TOK_KW_STRUCT ||
-         type == TOK_KW_UNION || type == TOK_KW_CONST || type == TOK_KW_VOLATILE;
+         type == TOK_KW_UNION || type == TOK_KW_CONST || type == TOK_KW_VOLATILE ||
+         type == TOK_KW_TYPEDEF;
 }
 
 DataType Parser::parse_type_specifier() {
   while (match(TOK_KW_CONST) || match(TOK_KW_VOLATILE)) {}
   Token t = peek();
   DataType result = DataType::Int;
+  if (t.type == TOK_IDENTIFIER) {
+    auto it = typedefs_.find(t.text);
+    if (it != typedefs_.end()) {
+      lexer_->next(); // consume typedef identifier
+      result = it->second.first;
+      while (match(TOK_KW_CONST) || match(TOK_KW_VOLATILE)) {}
+      return result;
+    }
+  }
   if (match(TOK_KW_VOID)) {
     result = DataType::Void;
   } else if (match(TOK_KW_CHAR)) {
@@ -56,13 +70,20 @@ DataType Parser::parse_type_specifier() {
   return result;
 }
 
-static std::vector<DataType> parse_func_ptr_param_list(Parser *parser, Lexer *lexer) {
+static std::vector<DataType> parse_func_ptr_param_list(Parser *parser, Lexer *lexer, bool *out_variadic = nullptr) {
   std::vector<DataType> param_types;
+  if (out_variadic) *out_variadic = false;
   if (parser->peek().type != TOK_RPAREN) {
     if (parser->peek().type == TOK_KW_VOID && parser->peek(2).type == TOK_RPAREN) {
       lexer->next(); // consume 'void'
+    } else if (parser->match(TOK_ELLIPSIS)) {
+      if (out_variadic) *out_variadic = true;
     } else {
       while (true) {
+        if (parser->match(TOK_ELLIPSIS)) {
+          if (out_variadic) *out_variadic = true;
+          break;
+        }
         DataType pt = parser->parse_type_specifier();
         while (parser->match(TOK_STAR)) {
           // ignore star on prototype param
@@ -72,6 +93,10 @@ static std::vector<DataType> parse_func_ptr_param_list(Parser *parser, Lexer *le
         }
         param_types.push_back(pt);
         if (parser->match(TOK_COMMA)) {
+          if (parser->match(TOK_ELLIPSIS)) {
+            if (out_variadic) *out_variadic = true;
+            break;
+          }
           continue;
         }
         break;
@@ -102,7 +127,8 @@ std::unique_ptr<VarDeclNode> Parser::parse_func_ptr_decl(DataType return_type, C
   Token id_tok = expect(TOK_IDENTIFIER, "Expected function pointer name");
   expect(TOK_RPAREN, "Expected ')' after function pointer name");
   expect(TOK_LPAREN, "Expected '(' for function pointer parameter list");
-  std::vector<DataType> param_types = parse_func_ptr_param_list(this, lexer_);
+  bool fp_variadic = false;
+  std::vector<DataType> param_types = parse_func_ptr_param_list(this, lexer_, &fp_variadic);
   expect(TOK_RPAREN, "Expected ')' after parameters");
   std::unique_ptr<ASTNode> init = nullptr;
   if (match(TOK_ASSIGN)) {
@@ -115,11 +141,23 @@ std::unique_ptr<VarDeclNode> Parser::parse_func_ptr_decl(DataType return_type, C
   node->pointer_level = ptr_level;
   node->func_ptr_ret_type = return_type;
   node->func_ptr_params = std::move(param_types);
+  node->func_ptr_is_variadic = fp_variadic;
   node->func_ptr_calling_convention = cc;
   return node;
 }
 
 std::unique_ptr<ASTNode> Parser::parse_declaration() {
+  if (match(TOK_KW_TYPEDEF)) {
+    DataType base_type = parse_type_specifier();
+    int ptr_level = 0;
+    while (match(TOK_STAR)) {
+      ++ptr_level;
+    }
+    Token alias_tok = expect(TOK_IDENTIFIER, "Expected identifier in typedef");
+    expect(TOK_SEMICOLON, "Expected ';' after typedef");
+    typedefs_[alias_tok.text] = {base_type, ptr_level};
+    return nullptr;
+  }
   bool is_static = match(TOK_KW_STATIC);
   bool is_extern = match(TOK_KW_EXTERN);
   (void)is_extern;
@@ -133,6 +171,13 @@ std::unique_ptr<ASTNode> Parser::parse_declaration() {
   if (peek().type == TOK_KW_STRUCT || peek().type == TOK_KW_UNION) {
     return parse_struct_or_union_decl();
   }
+  int typedef_ptr = 0;
+  if (peek().type == TOK_IDENTIFIER) {
+    auto it = typedefs_.find(peek().text);
+    if (it != typedefs_.end()) {
+      typedef_ptr = it->second.second;
+    }
+  }
   DataType type = parse_type_specifier();
   if (cc == CallingConvention::Default && is_calling_convention(peek().type)) {
     cc = parse_calling_convention();
@@ -140,7 +185,7 @@ std::unique_ptr<ASTNode> Parser::parse_declaration() {
   if (peek().type == TOK_LPAREN && (peek(2).type == TOK_STAR || is_calling_convention(peek(2).type))) {
     return parse_func_ptr_decl(type, cc);
   }
-  int pointer_level = 0;
+  int pointer_level = typedef_ptr;
   while (match(TOK_STAR)) {
     ++pointer_level;
     if (cc == CallingConvention::Default && is_calling_convention(peek().type)) {
@@ -244,14 +289,28 @@ std::unique_ptr<FuncDefNode>
 Parser::parse_function_def(DataType return_type, const Token &id_tok, int return_pointer_level, CallingConvention calling_convention, bool is_static) {
   expect(TOK_LPAREN, "Expected '(' after function name");
   std::vector<Param> params;
+  bool is_variadic = false;
   if (peek().type != TOK_RPAREN) {
     if (peek().type == TOK_KW_VOID && peek(2).type == TOK_RPAREN) {
       lexer_->next(); // consume 'void'
+    } else if (match(TOK_ELLIPSIS)) {
+      is_variadic = true;
     } else {
       while (true) {
+        if (match(TOK_ELLIPSIS)) {
+          is_variadic = true;
+          break;
+        }
         CallingConvention param_fp_cc = CallingConvention::Default;
         if (is_calling_convention(peek().type)) {
           param_fp_cc = parse_calling_convention();
+        }
+        int param_typedef_ptr = 0;
+        if (peek().type == TOK_IDENTIFIER) {
+          auto it = typedefs_.find(peek().text);
+          if (it != typedefs_.end()) {
+            param_typedef_ptr = it->second.second;
+          }
         }
         DataType param_type = DataType::Int;
         std::string param_struct_name;
@@ -286,7 +345,8 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
           Token param_name = expect(TOK_IDENTIFIER, "Expected parameter name");
           expect(TOK_RPAREN, "Expected ')' after parameter name");
           expect(TOK_LPAREN, "Expected '(' for parameter list");
-          std::vector<DataType> p_param_types = parse_func_ptr_param_list(this, lexer_);
+          bool fp_variadic = false;
+          std::vector<DataType> p_param_types = parse_func_ptr_param_list(this, lexer_, &fp_variadic);
           expect(TOK_RPAREN, "Expected ')' after parameter list");
           Param p;
           p.type = param_type;
@@ -296,29 +356,42 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
           p.is_func_ptr = true;
           p.func_ptr_ret_type = param_type;
           p.func_ptr_params = std::move(p_param_types);
+          p.func_ptr_is_variadic = fp_variadic;
           p.struct_name = param_struct_name;
           p.func_ptr_calling_convention = param_fp_cc;
           params.push_back(std::move(p));
         } else {
-          int param_ptr_level = 0;
+          int param_ptr_level = param_typedef_ptr;
           while (match(TOK_STAR)) {
             ++param_ptr_level;
           }
-          Token param_name =
-              expect(TOK_IDENTIFIER, "Expected parameter name");
+          std::string param_name_str;
+          int param_line = peek().line;
+          if (peek().type == TOK_IDENTIFIER) {
+            Token param_name = lexer_->next();
+            param_name_str = param_name.text;
+            param_line = param_name.line;
+          } else {
+            param_name_str = "_param_" + std::to_string(params.size());
+          }
           if (param_type == DataType::Void && param_ptr_level == 0) {
-            parse_error(param_name, "Parameter cannot have type 'void'");
+            Token err_tok{TOK_KW_VOID, "void", param_line, 1, {0}};
+            parse_error(err_tok, "Parameter cannot have type 'void'");
           }
           Param p;
           p.type = param_type;
           p.pointer_level = param_ptr_level;
-          p.name = param_name.text;
-          p.line = param_name.line;
+          p.name = param_name_str;
+          p.line = param_line;
           p.struct_name = param_struct_name;
           params.push_back(std::move(p));
         }
 
         if (match(TOK_COMMA)) {
+          if (match(TOK_ELLIPSIS)) {
+            is_variadic = true;
+            break;
+          }
           continue;
         }
         break;
@@ -333,7 +406,7 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
     auto func = std::make_unique<FuncDefNode>(id_tok.line, return_type, id_tok.text,
                                          std::move(params), nullptr,
                                          return_pointer_level, calling_convention,
-                                         is_static);
+                                         is_static, is_variadic);
     func->file_id = id_tok.file_id;
     return func;
   }
@@ -341,7 +414,7 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
   auto func = std::make_unique<FuncDefNode>(id_tok.line, return_type, id_tok.text,
                                        std::move(params), std::move(body),
                                        return_pointer_level, calling_convention,
-                                       is_static);
+                                       is_static, is_variadic);
   func->file_id = id_tok.file_id;
   return func;
 }

@@ -270,7 +270,8 @@ void ARM64CodeGenerator::visit(const FuncDefNode &node) {
   std::string prev_ret_label = ret_label_;
   ret_label_ = ".L" + node.name + "_arm_ret";
 
-  int extra = static_cast<int>(node.params.size()) * 8 +
+  int param_count = node.is_variadic ? 8 : static_cast<int>(node.params.size());
+  int extra = param_count * 8 +
               compute_ast_frame_bytes(node.body.get());
   int frame_size = (extra + 16 > 64) ? ((extra + 16 + 15) & ~15) : 64;
 
@@ -284,18 +285,37 @@ void ARM64CodeGenerator::visit(const FuncDefNode &node) {
   static const char *const ARG_REGS[] = {
       "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"};
 
-  for (size_t i = 0; i < node.params.size(); ++i) {
-    if (i < 8) {
+  if (node.is_variadic) {
+    for (size_t i = 0; i < node.params.size() && i < 8; ++i) {
       const auto &p = node.params[i];
       var_types_[p.name] = p.type;
       if (p.is_func_ptr) {
         is_func_ptr_[p.name] = true;
       }
-      int offset = get_var_offset(p.name);
+      get_var_offset(p.name);
+    }
+    for (size_t i = node.params.size(); i < 8; ++i) {
+      get_var_offset("__va_arg_" + std::to_string(i));
+    }
+    for (int i = 0; i < 8; ++i) {
+      int offset = (i + 1) * 8 + 8;
       emit_line("str " + std::string(ARG_REGS[i]) + ", [x29, #" +
                 std::to_string(offset) + "]");
-    } else {
-      unsupported(node, "more than 8 function parameters");
+    }
+  } else {
+    for (size_t i = 0; i < node.params.size(); ++i) {
+      if (i < 8) {
+        const auto &p = node.params[i];
+        var_types_[p.name] = p.type;
+        if (p.is_func_ptr) {
+          is_func_ptr_[p.name] = true;
+        }
+        int offset = get_var_offset(p.name);
+        emit_line("str " + std::string(ARG_REGS[i]) + ", [x29, #" +
+                  std::to_string(offset) + "]");
+      } else {
+        unsupported(node, "more than 8 function parameters");
+      }
     }
   }
 

@@ -423,7 +423,7 @@ The following roadmap items represent planned improvements and current architect
 - [ ] **Static Library Archive Reader**: Add archive parser for `.lib` and `.a` files to extract only referenced object members.
 
 ### Language & Frontend Enhancements
-- [ ] **Variadic Functions**: Add support for `...` parameter lists and `va_list` / `va_start` / `va_arg` / `va_end`.
+- [x] **Variadic Functions**: Add support for `...` parameter lists and `va_list` / `va_start` / `va_arg` / `va_end`.
 - [ ] **Floating-Point Types**: Support `float` and `double` arithmetic, registers (SSE/XMM on x86-64, VFP/NEON on ARM64).
 - [ ] **Preprocessor `#line` Markers**: Emit `#line` directives into preprocessed code so compiler diagnostics accurately report original header filenames and line numbers.
 - [ ] **Typedef & Enum Symbol Tables**: Complete full typedef alias resolution and enum constant promotion.

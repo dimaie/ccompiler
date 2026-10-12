@@ -80,6 +80,7 @@ enum TokenType {
   TOK_COLON,     /**< ':' Colon delimiter */
   TOK_COMMA,     /**< ',' List delimiter */
   TOK_DOT,       /**< '.' Structure member access */
+  TOK_ELLIPSIS,  /**< '...' Variadic arguments ellipsis */
   TOK_ARROW,     /**< '->' Structure pointer member access */
   TOK_HASH,      /**< '#' Preprocessor directive marker */
 

@@ -536,7 +536,16 @@ Token Lexer::scan_token() {
     tok.type = TOK_PERCENT;
     break;
   case '.':
-    tok.type = TOK_DOT;
+    if (peek_char() == '.' && peek_next_char() == '.') {
+      advance_char();
+      advance_char();
+      tok.text[1] = '.';
+      tok.text[2] = '.';
+      tok.text[3] = '\0';
+      tok.type = TOK_ELLIPSIS;
+    } else {
+      tok.type = TOK_DOT;
+    }
     break;
 
   default:
@@ -615,6 +624,8 @@ const char *token_name(TokenType t) {
     return ",";
   case TOK_DOT:
     return ".";
+  case TOK_ELLIPSIS:
+    return "...";
   case TOK_ARROW:
     return "->";
   case TOK_HASH:

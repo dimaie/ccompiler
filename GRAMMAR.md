@@ -41,10 +41,11 @@ member_decl
     ::= type_specifier "*"\* IDENTIFIER ( "[" INT_LIT "]" )? ";" ;
 
 func_def
-    ::= type_specifier "*"\* IDENTIFIER "(" ( "void" | param_list )? ")" compound_stmt ;
+    ::= type_specifier "*"\* IDENTIFIER "(" ( "void" | param_list )? ")" ( compound_stmt | ";" ) ;
 
 param_list
-    ::= param ( "," param )* ;
+    ::= ( param ( "," param )* ( "," "..." )? )
+      | "..." ;
 
 param
     ::= type_specifier "*"\* IDENTIFIER

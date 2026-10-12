@@ -52,20 +52,63 @@ std::unique_ptr<ASTNode> Parser::parse_primary() {
     expr = std::make_unique<StringLitNode>(t.line, std::move(s));
   } else if (t.type == TOK_IDENTIFIER) {
     lexer_->next();
+    std::string id_name = t.text;
     if (peek().type == TOK_LPAREN) {
-      expect(TOK_LPAREN, "Expected '(' after function name");
-      std::vector<std::unique_ptr<ASTNode>> args;
-      if (peek().type != TOK_RPAREN) {
-        while (true) {
-          args.push_back(parse_expr());
-          if (match(TOK_COMMA)) {
-            continue;
+      if (id_name == "va_start" || id_name == "__builtin_va_start") {
+        expect(TOK_LPAREN, "Expected '(' after va_start");
+        auto ap = parse_expr();
+        expect(TOK_COMMA, "Expected ',' in va_start");
+        Token last_param = expect(TOK_IDENTIFIER, "Expected parameter name in va_start");
+        expect(TOK_RPAREN, "Expected ')' after va_start");
+        auto addr_of = std::make_unique<UnaryOpNode>(last_param.line, TOK_AMP,
+            std::make_unique<IdentifierNode>(last_param.line, last_param.text));
+        auto plus_eight = std::make_unique<BinaryOpNode>(last_param.line, TOK_PLUS,
+            std::move(addr_of), std::make_unique<IntLitNode>(last_param.line, 8));
+        expr = std::make_unique<AssignNode>(t.line, std::move(ap), std::move(plus_eight));
+      } else if (id_name == "va_arg" || id_name == "__builtin_va_arg") {
+        expect(TOK_LPAREN, "Expected '(' after va_arg");
+        Token ap_tok = expect(TOK_IDENTIFIER, "Expected va_list variable in va_arg");
+        expect(TOK_COMMA, "Expected ',' in va_arg");
+        DataType arg_type = parse_type_specifier();
+        int ptr_level = 0;
+        while (match(TOK_STAR)) ++ptr_level;
+        (void)arg_type; (void)ptr_level;
+        expect(TOK_RPAREN, "Expected ')' after va_arg");
+        auto ap_read = std::make_unique<IdentifierNode>(t.line, ap_tok.text);
+        auto ap_plus_8 = std::make_unique<BinaryOpNode>(t.line, TOK_PLUS,
+            std::move(ap_read), std::make_unique<IntLitNode>(t.line, 8));
+        auto ap_lval = std::make_unique<IdentifierNode>(t.line, ap_tok.text);
+        auto assign = std::make_unique<AssignNode>(t.line, std::move(ap_lval), std::move(ap_plus_8));
+        auto minus_8 = std::make_unique<BinaryOpNode>(t.line, TOK_MINUS,
+            std::move(assign), std::make_unique<IntLitNode>(t.line, 8));
+        expr = std::make_unique<UnaryOpNode>(t.line, TOK_STAR, std::move(minus_8));
+      } else if (id_name == "va_end" || id_name == "__builtin_va_end") {
+        expect(TOK_LPAREN, "Expected '(' after va_end");
+        parse_expr();
+        expect(TOK_RPAREN, "Expected ')' after va_end");
+        expr = std::make_unique<IntLitNode>(t.line, 0);
+      } else if (id_name == "va_copy" || id_name == "__builtin_va_copy") {
+        expect(TOK_LPAREN, "Expected '(' after va_copy");
+        auto dest = parse_expr();
+        expect(TOK_COMMA, "Expected ',' in va_copy");
+        auto src = parse_expr();
+        expect(TOK_RPAREN, "Expected ')' after va_copy");
+        expr = std::make_unique<AssignNode>(t.line, std::move(dest), std::move(src));
+      } else {
+        expect(TOK_LPAREN, "Expected '(' after function name");
+        std::vector<std::unique_ptr<ASTNode>> args;
+        if (peek().type != TOK_RPAREN) {
+          while (true) {
+            args.push_back(parse_expr());
+            if (match(TOK_COMMA)) {
+              continue;
+            }
+            break;
           }
-          break;
         }
+        expect(TOK_RPAREN, "Expected ')' after function arguments");
+        expr = std::make_unique<CallNode>(t.line, t.text, std::move(args));
       }
-      expect(TOK_RPAREN, "Expected ')' after function arguments");
-      expr = std::make_unique<CallNode>(t.line, t.text, std::move(args));
     } else {
       expr = std::make_unique<IdentifierNode>(t.line, t.text);
     }

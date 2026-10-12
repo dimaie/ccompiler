@@ -98,6 +98,7 @@ void IRBuilder::visit(const FuncDefNode &node) {
   fn.name = node.name;
   fn.is_static = node.is_static;
   fn.return_type = node.return_type;
+  fn.is_variadic = node.is_variadic;
 
   var_table_.clear();
   current_func_ = &fn;

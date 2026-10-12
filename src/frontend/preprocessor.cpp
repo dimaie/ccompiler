@@ -60,9 +60,21 @@ void Preprocessor::init_virtual_headers() {
       "#ifndef _STDIO_H\n"
       "#define _STDIO_H\n"
       "int puts(const char *s);\n"
-      "int printf(const char *format);\n"
+      "int printf(const char *format, ...);\n"
+      "int sprintf(char *str, const char *format, ...);\n"
+      "int snprintf(char *str, int size, const char *format, ...);\n"
       "int putchar(int c);\n"
       "int getchar(void);\n"
+      "#endif\n";
+
+  virtual_headers_["stdarg.h"] =
+      "#ifndef _STDARG_H\n"
+      "#define _STDARG_H\n"
+      "typedef char *va_list;\n"
+      "#define va_start(ap, last) __builtin_va_start(ap, last)\n"
+      "#define va_arg(ap, type)   __builtin_va_arg(ap, type)\n"
+      "#define va_end(ap)         __builtin_va_end(ap)\n"
+      "#define va_copy(dest, src) __builtin_va_copy(dest, src)\n"
       "#endif\n";
 
   virtual_headers_["stdlib.h"] =

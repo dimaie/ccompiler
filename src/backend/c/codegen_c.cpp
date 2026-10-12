@@ -133,7 +133,11 @@ void CCodeGenerator::visit(const FuncDefNode &node) {
     *out_ << " " << node.name << "(";
   }
   if (node.params.empty()) {
-    *out_ << "void";
+    if (node.is_variadic) {
+      *out_ << "...";
+    } else {
+      *out_ << "void";
+    }
   } else {
     for (size_t i = 0; i < node.params.size(); ++i) {
       if (i > 0) {
@@ -153,6 +157,10 @@ void CCodeGenerator::visit(const FuncDefNode &node) {
           if (j > 0) *out_ << ", ";
           *out_ << data_type_str(p.func_ptr_params[j]);
         }
+        if (p.func_ptr_is_variadic) {
+          if (!p.func_ptr_params.empty()) *out_ << ", ";
+          *out_ << "...";
+        }
         *out_ << ")";
       } else {
         if (p.type == DataType::Struct || p.type == DataType::Union) {
@@ -168,6 +176,9 @@ void CCodeGenerator::visit(const FuncDefNode &node) {
           *out_ << " " << p.name;
         }
       }
+    }
+    if (node.is_variadic) {
+      *out_ << ", ...";
     }
   }
   if (node.body) {

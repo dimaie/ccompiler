@@ -754,6 +754,7 @@ static void test_token_names() {
   assert(std::strcmp(token_name(TOK_IDENTIFIER), "IDENTIFIER") == 0);
   assert(std::strcmp(token_name(TOK_COLON), ":") == 0);
   assert(std::strcmp(token_name(TOK_SEMICOLON), ";") == 0);
+  assert(std::strcmp(token_name(TOK_ELLIPSIS), "...") == 0);
 
   // Keywords from KEYWORDS map
   assert(std::strcmp(token_name(TOK_KW_IF), "if") == 0);
@@ -890,6 +891,70 @@ static void test_func_def_node() {
       threw = true;
     }
     assert(threw);
+  }
+
+  // Variadic function prototype: int printf(const char *format, ...);
+  {
+    auto prog = parse_source("int printf(const char *format, ...);\n");
+    assert(prog->statements.size() == 1);
+    auto *func = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(func->name == "printf");
+    assert(func->is_variadic == true);
+    assert(func->params.size() == 1);
+    assert(func->params[0].type == DataType::Char);
+    assert(func->params[0].pointer_level == 1);
+    assert(func->params[0].name == "format");
+    assert(func->body == nullptr);
+  }
+
+  // Variadic prototype with unnamed parameter: int printf(const char *, ...);
+  {
+    auto prog = parse_source("int printf(const char *, ...);\n");
+    assert(prog->statements.size() == 1);
+    auto *func = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(func->name == "printf");
+    assert(func->is_variadic == true);
+    assert(func->params.size() == 1);
+    assert(func->params[0].type == DataType::Char);
+    assert(func->params[0].pointer_level == 1);
+  }
+
+  // Variadic function definition: int sum(int count, ...) { return 0; }
+  {
+    auto prog = parse_source("int sum(int count, ...) { return 0; }\n");
+    assert(prog->statements.size() == 1);
+    auto *func = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(func->name == "sum");
+    assert(func->is_variadic == true);
+    assert(func->params.size() == 1);
+    assert(func->params[0].name == "count");
+    assert(func->body != nullptr);
+  }
+
+  // Variadic function pointer: int (*logger)(const char *fmt, ...);
+  {
+    auto prog = parse_source("int (*logger)(const char *fmt, ...);\n");
+    assert(prog->statements.size() == 1);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->name == "logger");
+    assert(var->is_func_ptr == true);
+    assert(var->func_ptr_is_variadic == true);
+    assert(var->func_ptr_params.size() == 1);
+  }
+
+  // Variadic builtins parsing: va_start, va_arg, va_end, va_copy
+  {
+    auto prog = parse_source("int foo(int n, ...) {\n"
+                             "  va_list ap;\n"
+                             "  va_start(ap, n);\n"
+                             "  int val = va_arg(ap, int);\n"
+                             "  va_end(ap);\n"
+                             "  return val;\n"
+                             "}\n");
+    assert(prog->statements.size() == 1);
+    auto *func = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(func->is_variadic == true);
+    assert(func->body != nullptr);
   }
 }
 

@@ -334,12 +334,20 @@ AssembledModule X86_64InternalAssembler::assemble(const std::string &assembly_so
         emit_bytes(module.text_bytes, {make_rex(true, src, 0, dst), 0x85, make_modrm(3, src, dst)});
       }
     }
-    // 10. movq $imm, %reg
+    // 10. movq $imm, %reg / movb $imm, %reg
     else if (mnemonic == "movq" && ops.size() == 2 && ops[0][0] == '$' && ops[1][0] == '%') {
       int64_t imm = parse_immediate(ops[0]);
       int reg = parse_reg(ops[1]);
       emit_bytes(module.text_bytes, {make_rex(true, 0, 0, reg), static_cast<uint8_t>(0xB8 + (reg & 7))});
       emit_int64(module.text_bytes, imm);
+    } else if (mnemonic == "movb" && ops.size() == 2 && ops[0][0] == '$' && ops[1][0] == '%') {
+      int64_t imm = parse_immediate(ops[0]);
+      int reg = parse_reg(ops[1]);
+      if (reg >= 4) {
+        emit_bytes(module.text_bytes, {make_rex(false, 0, 0, reg), static_cast<uint8_t>(0xB0 + (reg & 7)), static_cast<uint8_t>(imm & 0xFF)});
+      } else {
+        emit_bytes(module.text_bytes, {static_cast<uint8_t>(0xB0 + (reg & 7)), static_cast<uint8_t>(imm & 0xFF)});
+      }
     }
     // 11. Memory load/store: e.g. movq -16(%rbp), %rax or movq %rax, -16(%rbp)
     else if ((mnemonic == "movq" || mnemonic == "movb" || mnemonic == "movw" ||

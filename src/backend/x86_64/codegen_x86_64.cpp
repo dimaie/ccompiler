@@ -231,6 +231,7 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
   is_func_ptr_.clear();
   var_func_ptr_conventions_.clear();
   func_conventions_.clear();
+  defined_funcs_.clear();
   var_struct_name_.clear();
   struct_defs_.clear();
   current_offset_ = 0;
@@ -259,6 +260,9 @@ void X86_64CodeGenerator::generate(const ProgramNode &program,
     if (stmt && stmt->getType() == ASTNodeType::FuncDef) {
       const auto *f = static_cast<const FuncDefNode *>(stmt.get());
       func_conventions_[f->name] = f->calling_convention;
+      if (f->body) {
+        defined_funcs_.insert(f->name);
+      }
     }
   }
 
@@ -394,8 +398,9 @@ void X86_64CodeGenerator::visit(const FuncDefNode &node) {
 
   std::ostringstream param_ss;
   if (node.calling_convention == CallingConvention::Default) {
-    for (size_t i = 0; i < node.params.size(); ++i) {
-      if (i < 6) {
+    if (node.is_variadic) {
+      current_offset_ = 48;
+      for (size_t i = 0; i < node.params.size() && i < 6; ++i) {
         const auto &p = node.params[i];
         var_types_[p.name] = p.type;
         var_pointer_level_[p.name] = p.pointer_level;
@@ -403,11 +408,28 @@ void X86_64CodeGenerator::visit(const FuncDefNode &node) {
           is_func_ptr_[p.name] = true;
           var_func_ptr_conventions_[p.name] = p.func_ptr_calling_convention;
         }
-        int offset = get_var_offset(p.name);
+        var_offsets_[p.name] = 48 - static_cast<int>(i) * 8;
+      }
+      for (int i = 0; i < 6; ++i) {
         param_ss << "    movq " << ARG_REGS[i] << ", -"
-                 << offset << "(%rbp)\n";
-      } else {
-        unsupported(node, "more than 6 function parameters");
+                 << (48 - i * 8) << "(%rbp)\n";
+      }
+    } else {
+      for (size_t i = 0; i < node.params.size(); ++i) {
+        if (i < 6) {
+          const auto &p = node.params[i];
+          var_types_[p.name] = p.type;
+          var_pointer_level_[p.name] = p.pointer_level;
+          if (p.is_func_ptr) {
+            is_func_ptr_[p.name] = true;
+            var_func_ptr_conventions_[p.name] = p.func_ptr_calling_convention;
+          }
+          int offset = get_var_offset(p.name);
+          param_ss << "    movq " << ARG_REGS[i] << ", -"
+                   << offset << "(%rbp)\n";
+        } else {
+          unsupported(node, "more than 6 function parameters");
+        }
       }
     }
   } else if (node.calling_convention == CallingConvention::Cdecl ||
@@ -536,10 +558,15 @@ void X86_64CodeGenerator::visit(const CallNode &node) {
 
     // Dual-load Windows x64 ABI registers so external functions (e.g. puts, printf)
     // work seamlessly on Windows (MinGW/MSVC) as well as SysV AMD64 (Linux).
-    if (node.args.size() >= 4) emit_line("movq %rcx, %r9");
-    if (node.args.size() >= 3) emit_line("movq %rdx, %r8");
-    if (node.args.size() >= 2) emit_line("movq %rsi, %rdx");
-    if (node.args.size() >= 1) emit_line("movq %rdi, %rcx");
+    // Internal functions use the SysV registers (%rdi, %rsi, %rdx, %rcx, %r8, %r9).
+    bool is_internal = (!node.callee.empty() && defined_funcs_.find(node.callee) != defined_funcs_.end());
+    if (!is_internal) {
+      if (node.args.size() >= 4) emit_line("movq %rcx, %r9");
+      if (node.args.size() >= 3) emit_line("movq %rdx, %r8");
+      if (node.args.size() >= 2) emit_line("movq %rsi, %rdx");
+      if (node.args.size() >= 1) emit_line("movq %rdi, %rcx");
+    }
+    emit_line("movb $0, %al");
 
     if (is_indirect) {
       emit_line("popq %r11");

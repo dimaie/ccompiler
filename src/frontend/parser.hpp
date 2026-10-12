@@ -6,6 +6,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 
 class ParseException : public std::runtime_error {
 public:
@@ -68,6 +69,7 @@ public:
 
 private:
   Lexer *lexer_;
+  std::unordered_map<std::string, std::pair<DataType, int>> typedefs_;
 
   // Declaration parsing helpers (parser_decl.cpp)
   std::unique_ptr<VarDeclNode> parse_func_ptr_decl(DataType return_type, CallingConvention calling_convention = CallingConvention::Default);

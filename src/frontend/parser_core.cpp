@@ -1,6 +1,8 @@
 #include "parser.hpp"
 
-Parser::Parser(Lexer *lexer) : lexer_(lexer) {}
+Parser::Parser(Lexer *lexer) : lexer_(lexer) {
+  typedefs_["va_list"] = {DataType::Char, 1};
+}
 
 void Parser::parse_error(const Token &tok, const std::string &msg) {
   std::string full_msg = "Syntax Error [Line " + std::to_string(tok.line) +

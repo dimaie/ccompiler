@@ -278,6 +278,7 @@ public:
   DataType func_ptr_ret_type{DataType::Int};
   int func_ptr_ret_pointer_level{0};
   std::vector<DataType> func_ptr_params;
+  bool func_ptr_is_variadic{false};
   std::string struct_name;
   CallingConvention func_ptr_calling_convention{CallingConvention::Default};
 
@@ -335,6 +336,7 @@ struct Param {
   DataType func_ptr_ret_type{DataType::Int};
   int func_ptr_ret_pointer_level{0};
   std::vector<DataType> func_ptr_params;
+  bool func_ptr_is_variadic{false};
   std::string struct_name;
   CallingConvention func_ptr_calling_convention{CallingConvention::Default};
 };
@@ -349,16 +351,18 @@ public:
   std::string return_struct_name;
   CallingConvention calling_convention{CallingConvention::Default};
   bool is_static{false};
+  bool is_variadic{false};
 
   FuncDefNode(int line, DataType return_type, std::string name,
               std::vector<Param> params, std::unique_ptr<CompoundNode> body,
               int return_pointer_level = 0,
               CallingConvention calling_convention = CallingConvention::Default,
-              bool is_static = false)
+              bool is_static = false, bool is_variadic = false)
       : ASTNode(line), return_type(return_type),
         return_pointer_level(return_pointer_level), name(std::move(name)),
         params(std::move(params)), body(std::move(body)),
-        calling_convention(calling_convention), is_static(is_static) {}
+        calling_convention(calling_convention), is_static(is_static),
+        is_variadic(is_variadic) {}
 
   ASTNodeType getType() const override { return ASTNodeType::FuncDef; }
   void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
@@ -371,6 +375,13 @@ public:
         std::cout << ", ";
       }
       std::cout << data_type_str(params[i].type) << " " << params[i].name;
+    }
+    if (is_variadic) {
+      if (!params.empty()) {
+        std::cout << ", ...";
+      } else {
+        std::cout << "...";
+      }
     }
     std::cout << ")\n";
     if (body) {

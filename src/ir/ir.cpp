@@ -97,6 +97,10 @@ void IRFunction::print(std::ostream &out) const {
     if (i > 0) out << ", ";
     out << params[i].to_string();
   }
+  if (is_variadic) {
+    if (!params.empty()) out << ", ";
+    out << "...";
+  }
   out << ") {\n";
   for (const auto &inst : instructions) {
     inst.print(out);

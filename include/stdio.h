@@ -3,7 +3,9 @@
 
 /* Standard Input/Output functions provided by C Runtime (msvcrt.dll) */
 int puts(const char *s);
-int printf(const char *format);
+int printf(const char *format, ...);
+int sprintf(char *str, const char *format, ...);
+int snprintf(char *str, int size, const char *format, ...);
 int putchar(int c);
 int getchar(void);
 

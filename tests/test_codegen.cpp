@@ -629,6 +629,41 @@ static void test_functions_codegen() {
       assert(e.get_arch() == "x86_64");
     }
     assert(threw);
+
+    // Test variadic call sets %al to 0
+    auto var_call = parse("int printf(const char *fmt, ...);\nint main() { printf(\"hello %d\", 42); return 0; }\n");
+    std::string var_asm = gen->generate_to_string(*var_call);
+    assert(var_asm.find("movb $0, %al") != std::string::npos);
+    assert(var_asm.find("call printf") != std::string::npos);
+
+    // Test variadic function definition spills argument registers
+    auto var_def = parse("int sum(int count, ...) { return count; }\n");
+    std::string var_def_asm = gen->generate_to_string(*var_def);
+    assert(var_def_asm.find("movq %rdi, -48(%rbp)") != std::string::npos);
+    assert(var_def_asm.find("movq %rsi, -40(%rbp)") != std::string::npos);
+    assert(var_def_asm.find("movq %r9, -8(%rbp)") != std::string::npos);
+
+    // Test variadic sum function with va_start, va_arg, va_end
+    auto va_prog = parse(
+      "int sum(int count, ...) {\n"
+      "  va_list ap;\n"
+      "  va_start(ap, count);\n"
+      "  int total = 0;\n"
+      "  int i = 0;\n"
+      "  while (i < count) {\n"
+      "    total = total + va_arg(ap, int);\n"
+      "    i = i + 1;\n"
+      "  }\n"
+      "  va_end(ap);\n"
+      "  return total;\n"
+      "}\n"
+      "int main() {\n"
+      "  return sum(3, 10, 20, 30);\n"
+      "}\n"
+    );
+    std::string va_asm = gen->generate_to_string(*va_prog);
+    assert(va_asm.find("sum:") != std::string::npos);
+    assert(va_asm.find("call sum") != std::string::npos);
   }
 
   // 2. ARM64
@@ -654,6 +689,12 @@ static void test_functions_codegen() {
       assert(e.get_arch() == "arm64");
     }
     assert(threw);
+
+    // Test ARM64 variadic function definition spills registers
+    auto var_arm = parse("int sum(int count, ...) { return count; }\n");
+    std::string var_arm_asm = gen->generate_to_string(*var_arm);
+    assert(var_arm_asm.find("str x0, [x29, #16]") != std::string::npos);
+    assert(var_arm_asm.find("str x7, [x29, #72]") != std::string::npos);
   }
 
   // 3. AVR
@@ -702,6 +743,12 @@ static void test_functions_codegen() {
     assert(script_c.find("int square(int x)") != std::string::npos);
     assert(script_c.find("int main(void)") != std::string::npos);
     assert(script_c.find("return square(4);") != std::string::npos);
+
+    // Test variadic function transpilation
+    auto var_c = parse("int printf(const char *format, ...);\nint sum(int count, ...) { return count; }\n");
+    std::string var_c_out = gen->generate_to_string(*var_c);
+    assert(var_c_out.find("int printf(char *format, ...);") != std::string::npos);
+    assert(var_c_out.find("int sum(int count, ...)") != std::string::npos);
   }
 }
 

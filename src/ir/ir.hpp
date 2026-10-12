@@ -104,6 +104,7 @@ struct IRFunction {
   bool is_static{false};
   DataType return_type{DataType::Int};
   std::vector<IROperand> params;
+  bool is_variadic{false};
   std::vector<IRInstruction> instructions;
 
   void print(std::ostream &out) const;

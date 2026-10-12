@@ -140,6 +140,17 @@ static void test_ir_pretty_printing() {
   assert(output.find("function @add") != std::string::npos);
   assert(output.find("add") != std::string::npos);
   assert(output.find("ret") != std::string::npos);
+
+  // Variadic function IR
+  auto vprog = parse("int sum(int count, ...) { return count; }\n");
+  IRModule vir_mod = builder.build(*vprog);
+  assert(vir_mod.functions.size() == 1);
+  assert(vir_mod.functions[0].is_variadic);
+  std::ostringstream vss;
+  vir_mod.print(vss);
+  std::string vout = vss.str();
+  assert(vout.find("function @sum") != std::string::npos);
+  assert(vout.find("...") != std::string::npos);
 }
 
 static void test_ir_local_var_storage_modes() {
