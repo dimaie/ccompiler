@@ -144,6 +144,9 @@ void CCodeGenerator::visit(const FuncDefNode &node) {
         *out_ << ", ";
       }
       const auto &p = node.params[i];
+      if (p.is_register || p.storage_class == StorageClass::Register) {
+        *out_ << "register ";
+      }
       if (p.is_func_ptr) {
         *out_ << data_type_str(p.func_ptr_ret_type);
         if (p.func_ptr_ret_pointer_level > 0) {
@@ -223,6 +226,15 @@ void CCodeGenerator::visit(const CompoundNode &node) {
 }
 
 void CCodeGenerator::visit(const VarDeclNode &node) {
+  if (node.is_register || node.storage_class == StorageClass::Register) {
+    *out_ << "register ";
+  } else if (node.is_static || node.storage_class == StorageClass::Static) {
+    *out_ << "static ";
+  } else if (node.is_extern || node.storage_class == StorageClass::Extern) {
+    *out_ << "extern ";
+  } else if (node.is_auto || node.storage_class == StorageClass::Auto) {
+    *out_ << "auto ";
+  }
   if (node.is_func_ptr) {
     *out_ << data_type_str(node.func_ptr_ret_type);
     if (node.func_ptr_ret_pointer_level > 0) {

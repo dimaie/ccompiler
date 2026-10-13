@@ -1,6 +1,12 @@
 #include "parser.hpp"
 #include <utility>
 
+bool Parser::is_storage_class(TokenType type) const {
+  return type == TOK_KW_AUTO || type == TOK_KW_REGISTER ||
+         type == TOK_KW_STATIC || type == TOK_KW_EXTERN ||
+         type == TOK_KW_TYPEDEF;
+}
+
 bool Parser::is_calling_convention(TokenType type) const {
   return type == TOK_KW_CDECL || type == TOK_KW_STDCALL || type == TOK_KW_FASTCALL;
 }
@@ -84,6 +90,7 @@ static std::vector<DataType> parse_func_ptr_param_list(Parser *parser, Lexer *le
           if (out_variadic) *out_variadic = true;
           break;
         }
+        while (parser->match(TOK_KW_REGISTER) || parser->match(TOK_KW_CONST) || parser->match(TOK_KW_VOLATILE)) {}
         DataType pt = parser->parse_type_specifier();
         while (parser->match(TOK_STAR)) {
           // ignore star on prototype param
@@ -147,29 +154,62 @@ std::unique_ptr<VarDeclNode> Parser::parse_func_ptr_decl(DataType return_type, C
 }
 
 std::unique_ptr<ASTNode> Parser::parse_declaration() {
-  if (match(TOK_KW_TYPEDEF)) {
-    DataType base_type = parse_type_specifier();
-    int ptr_level = 0;
-    while (match(TOK_STAR)) {
-      ++ptr_level;
-    }
-    Token alias_tok = expect(TOK_IDENTIFIER, "Expected identifier in typedef");
-    expect(TOK_SEMICOLON, "Expected ';' after typedef");
-    typedefs_[alias_tok.text] = {base_type, ptr_level};
-    return nullptr;
-  }
-  bool is_static = match(TOK_KW_STATIC);
-  bool is_extern = match(TOK_KW_EXTERN);
-  (void)is_extern;
+  StorageClass sc = StorageClass::None;
   CallingConvention cc = CallingConvention::Default;
-  if (is_calling_convention(peek().type)) {
-    cc = parse_calling_convention();
+
+  while (true) {
+    Token t = peek();
+    if (t.type == TOK_KW_TYPEDEF) {
+      if (sc != StorageClass::None) {
+        parse_error(t, "Multiple storage classes in declaration");
+      }
+      match(TOK_KW_TYPEDEF);
+      DataType base_type = parse_type_specifier();
+      int ptr_level = 0;
+      while (match(TOK_STAR)) {
+        ++ptr_level;
+      }
+      Token alias_tok = expect(TOK_IDENTIFIER, "Expected identifier in typedef");
+      expect(TOK_SEMICOLON, "Expected ';' after typedef");
+      typedefs_[alias_tok.text] = {base_type, ptr_level};
+      return nullptr;
+    } else if (t.type == TOK_KW_STATIC) {
+      if (sc != StorageClass::None) {
+        parse_error(t, "Multiple storage classes in declaration");
+      }
+      match(TOK_KW_STATIC);
+      sc = StorageClass::Static;
+    } else if (t.type == TOK_KW_EXTERN) {
+      if (sc != StorageClass::None) {
+        parse_error(t, "Multiple storage classes in declaration");
+      }
+      match(TOK_KW_EXTERN);
+      sc = StorageClass::Extern;
+    } else if (t.type == TOK_KW_AUTO) {
+      if (sc != StorageClass::None) {
+        parse_error(t, "Multiple storage classes in declaration");
+      }
+      match(TOK_KW_AUTO);
+      sc = StorageClass::Auto;
+    } else if (t.type == TOK_KW_REGISTER) {
+      if (sc != StorageClass::None) {
+        parse_error(t, "Multiple storage classes in declaration");
+      }
+      match(TOK_KW_REGISTER);
+      sc = StorageClass::Register;
+    } else if (is_calling_convention(t.type)) {
+      cc = parse_calling_convention();
+    } else if (t.type == TOK_KW_CONST || t.type == TOK_KW_VOLATILE) {
+      lexer_->next();
+    } else {
+      break;
+    }
   }
-  if (!is_static && peek().type == TOK_KW_STATIC) {
-    is_static = match(TOK_KW_STATIC);
-  }
+
+  bool is_static = (sc == StorageClass::Static);
+
   if (peek().type == TOK_KW_STRUCT || peek().type == TOK_KW_UNION) {
-    return parse_struct_or_union_decl();
+    return parse_struct_or_union_decl(sc);
   }
   int typedef_ptr = 0;
   if (peek().type == TOK_IDENTIFIER) {
@@ -179,11 +219,39 @@ std::unique_ptr<ASTNode> Parser::parse_declaration() {
     }
   }
   DataType type = parse_type_specifier();
+
+  if (sc == StorageClass::None) {
+    Token t = peek();
+    if (t.type == TOK_KW_REGISTER) {
+      match(TOK_KW_REGISTER);
+      sc = StorageClass::Register;
+    } else if (t.type == TOK_KW_AUTO) {
+      match(TOK_KW_AUTO);
+      sc = StorageClass::Auto;
+    } else if (t.type == TOK_KW_STATIC) {
+      match(TOK_KW_STATIC);
+      sc = StorageClass::Static;
+      is_static = true;
+    } else if (t.type == TOK_KW_EXTERN) {
+      match(TOK_KW_EXTERN);
+      sc = StorageClass::Extern;
+    }
+  }
+
   if (cc == CallingConvention::Default && is_calling_convention(peek().type)) {
     cc = parse_calling_convention();
   }
   if (peek().type == TOK_LPAREN && (peek(2).type == TOK_STAR || is_calling_convention(peek(2).type))) {
-    return parse_func_ptr_decl(type, cc);
+    auto fp_node = parse_func_ptr_decl(type, cc);
+    fp_node->storage_class = sc;
+    fp_node->is_register = (sc == StorageClass::Register);
+    fp_node->is_static = (sc == StorageClass::Static);
+    fp_node->is_extern = (sc == StorageClass::Extern);
+    fp_node->is_auto = (sc == StorageClass::Auto);
+    if (sc == StorageClass::Register) {
+      register_var_name(fp_node->name);
+    }
+    return fp_node;
   }
   int pointer_level = typedef_ptr;
   while (match(TOK_STAR)) {
@@ -197,15 +265,30 @@ std::unique_ptr<ASTNode> Parser::parse_declaration() {
   }
   Token id_tok = expect(TOK_IDENTIFIER, "Expected identifier after type specifier");
   if (peek().type == TOK_LPAREN) {
-    return parse_function_def(type, id_tok, pointer_level, cc, is_static);
+    if (sc == StorageClass::Register) {
+      parse_error(id_tok, "Function cannot have 'register' storage class");
+    }
+    if (sc == StorageClass::Auto) {
+      parse_error(id_tok, "Function cannot have 'auto' storage class");
+    }
+    return parse_function_def(type, id_tok, pointer_level, cc, is_static, sc);
   }
   if (type == DataType::Void && pointer_level == 0) {
     parse_error(id_tok, "Variable cannot have type 'void'");
   }
-  return parse_var_decl_after_id(type, id_tok, pointer_level);
+  auto var_decl = parse_var_decl_after_id(type, id_tok, pointer_level);
+  var_decl->storage_class = sc;
+  var_decl->is_register = (sc == StorageClass::Register);
+  var_decl->is_static = (sc == StorageClass::Static);
+  var_decl->is_extern = (sc == StorageClass::Extern);
+  var_decl->is_auto = (sc == StorageClass::Auto);
+  if (sc == StorageClass::Register) {
+    register_var_name(var_decl->name);
+  }
+  return var_decl;
 }
 
-std::unique_ptr<ASTNode> Parser::parse_struct_or_union_decl() {
+std::unique_ptr<ASTNode> Parser::parse_struct_or_union_decl(StorageClass sc) {
   Token kw_tok = peek();
   bool is_union = match(TOK_KW_UNION);
   if (!is_union) {
@@ -220,6 +303,11 @@ std::unique_ptr<ASTNode> Parser::parse_struct_or_union_decl() {
   if (match(TOK_LBRACE)) {
     std::vector<StructMember> members;
     while (peek().type != TOK_RBRACE && peek().type != TOK_EOF) {
+      if (peek().type == TOK_KW_REGISTER || peek().type == TOK_KW_STATIC ||
+          peek().type == TOK_KW_AUTO || peek().type == TOK_KW_EXTERN ||
+          peek().type == TOK_KW_TYPEDEF) {
+        parse_error(peek(), "Storage class not allowed on struct or union member");
+      }
       StructMember m;
       if (peek().type == TOK_KW_STRUCT || peek().type == TOK_KW_UNION) {
         m.is_union = match(TOK_KW_UNION);
@@ -260,6 +348,14 @@ std::unique_ptr<ASTNode> Parser::parse_struct_or_union_decl() {
     Token id_tok = expect(TOK_IDENTIFIER, "Expected variable name after struct/union definition");
     auto var_decl = parse_var_decl_after_id(is_union ? DataType::Union : DataType::Struct, id_tok, ptr_level);
     var_decl->struct_name = tag;
+    var_decl->storage_class = sc;
+    var_decl->is_register = (sc == StorageClass::Register);
+    var_decl->is_static = (sc == StorageClass::Static);
+    var_decl->is_extern = (sc == StorageClass::Extern);
+    var_decl->is_auto = (sc == StorageClass::Auto);
+    if (sc == StorageClass::Register) {
+      register_var_name(var_decl->name);
+    }
     auto s = std::make_unique<StructDefNode>(kw_tok.line, is_union, tag, std::move(members), std::move(var_decl));
     s->file_id = kw_tok.file_id;
     return s;
@@ -275,18 +371,32 @@ std::unique_ptr<ASTNode> Parser::parse_struct_or_union_decl() {
   }
   Token id_tok = expect(TOK_IDENTIFIER, "Expected variable or function name after struct/union type");
   if (peek().type == TOK_LPAREN) {
-    auto func = parse_function_def(is_union ? DataType::Union : DataType::Struct, id_tok, ptr_level);
+    if (sc == StorageClass::Register) {
+      parse_error(id_tok, "Function cannot have 'register' storage class");
+    }
+    if (sc == StorageClass::Auto) {
+      parse_error(id_tok, "Function cannot have 'auto' storage class");
+    }
+    auto func = parse_function_def(is_union ? DataType::Union : DataType::Struct, id_tok, ptr_level, CallingConvention::Default, sc == StorageClass::Static, sc);
     func->return_struct_name = tag;
     return func;
   }
 
   auto var_decl = parse_var_decl_after_id(is_union ? DataType::Union : DataType::Struct, id_tok, ptr_level);
   var_decl->struct_name = tag;
+  var_decl->storage_class = sc;
+  var_decl->is_register = (sc == StorageClass::Register);
+  var_decl->is_static = (sc == StorageClass::Static);
+  var_decl->is_extern = (sc == StorageClass::Extern);
+  var_decl->is_auto = (sc == StorageClass::Auto);
+  if (sc == StorageClass::Register) {
+    register_var_name(var_decl->name);
+  }
   return var_decl;
 }
 
 std::unique_ptr<FuncDefNode>
-Parser::parse_function_def(DataType return_type, const Token &id_tok, int return_pointer_level, CallingConvention calling_convention, bool is_static) {
+Parser::parse_function_def(DataType return_type, const Token &id_tok, int return_pointer_level, CallingConvention calling_convention, bool is_static, StorageClass storage_class) {
   expect(TOK_LPAREN, "Expected '(' after function name");
   std::vector<Param> params;
   bool is_variadic = false;
@@ -303,6 +413,26 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
         }
         CallingConvention param_fp_cc = CallingConvention::Default;
         if (is_calling_convention(peek().type)) {
+          param_fp_cc = parse_calling_convention();
+        }
+        StorageClass param_sc = StorageClass::None;
+        while (true) {
+          Token pt = peek();
+          if (pt.type == TOK_KW_REGISTER) {
+            if (param_sc != StorageClass::None) {
+              parse_error(pt, "Multiple storage classes in parameter declaration");
+            }
+            match(TOK_KW_REGISTER);
+            param_sc = StorageClass::Register;
+          } else if (pt.type == TOK_KW_AUTO || pt.type == TOK_KW_STATIC || pt.type == TOK_KW_EXTERN || pt.type == TOK_KW_TYPEDEF) {
+            parse_error(pt, "Invalid storage class for function parameter");
+          } else if (pt.type == TOK_KW_CONST || pt.type == TOK_KW_VOLATILE) {
+            lexer_->next();
+          } else {
+            break;
+          }
+        }
+        if (param_fp_cc == CallingConvention::Default && is_calling_convention(peek().type)) {
           param_fp_cc = parse_calling_convention();
         }
         int param_typedef_ptr = 0;
@@ -322,6 +452,10 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
           param_struct_name = tag_tok.text;
         } else {
           param_type = parse_type_specifier();
+        }
+        if (param_sc == StorageClass::None && peek().type == TOK_KW_REGISTER) {
+          match(TOK_KW_REGISTER);
+          param_sc = StorageClass::Register;
         }
         if (param_fp_cc == CallingConvention::Default && is_calling_convention(peek().type)) {
           param_fp_cc = parse_calling_convention();
@@ -359,6 +493,11 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
           p.func_ptr_is_variadic = fp_variadic;
           p.struct_name = param_struct_name;
           p.func_ptr_calling_convention = param_fp_cc;
+          p.storage_class = param_sc;
+          p.is_register = (param_sc == StorageClass::Register);
+          if (p.is_register) {
+            pending_register_params_.push_back(p.name);
+          }
           params.push_back(std::move(p));
         } else {
           int param_ptr_level = param_typedef_ptr;
@@ -384,6 +523,11 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
           p.name = param_name_str;
           p.line = param_line;
           p.struct_name = param_struct_name;
+          p.storage_class = param_sc;
+          p.is_register = (param_sc == StorageClass::Register);
+          if (p.is_register) {
+            pending_register_params_.push_back(p.name);
+          }
           params.push_back(std::move(p));
         }
 
@@ -403,10 +547,11 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
     calling_convention = parse_calling_convention();
   }
   if (match(TOK_SEMICOLON)) {
+    pending_register_params_.clear();
     auto func = std::make_unique<FuncDefNode>(id_tok.line, return_type, id_tok.text,
                                          std::move(params), nullptr,
                                          return_pointer_level, calling_convention,
-                                         is_static, is_variadic);
+                                         is_static, is_variadic, storage_class);
     func->file_id = id_tok.file_id;
     return func;
   }
@@ -414,7 +559,7 @@ Parser::parse_function_def(DataType return_type, const Token &id_tok, int return
   auto func = std::make_unique<FuncDefNode>(id_tok.line, return_type, id_tok.text,
                                        std::move(params), std::move(body),
                                        return_pointer_level, calling_convention,
-                                       is_static, is_variadic);
+                                       is_static, is_variadic, storage_class);
   func->file_id = id_tok.file_id;
   return func;
 }
@@ -496,8 +641,34 @@ Parser::parse_var_decl_after_id(DataType type, const Token &id_tok, int pointer_
 }
 
 std::unique_ptr<VarDeclNode> Parser::parse_var_decl() {
+  StorageClass sc = StorageClass::None;
+  while (true) {
+    Token t = peek();
+    if (t.type == TOK_KW_REGISTER) {
+      if (sc != StorageClass::None) parse_error(t, "Multiple storage classes in declaration");
+      match(TOK_KW_REGISTER);
+      sc = StorageClass::Register;
+    } else if (t.type == TOK_KW_AUTO) {
+      if (sc != StorageClass::None) parse_error(t, "Multiple storage classes in declaration");
+      match(TOK_KW_AUTO);
+      sc = StorageClass::Auto;
+    } else if (t.type == TOK_KW_STATIC) {
+      if (sc != StorageClass::None) parse_error(t, "Multiple storage classes in declaration");
+      match(TOK_KW_STATIC);
+      sc = StorageClass::Static;
+    } else if (t.type == TOK_KW_EXTERN) {
+      if (sc != StorageClass::None) parse_error(t, "Multiple storage classes in declaration");
+      match(TOK_KW_EXTERN);
+      sc = StorageClass::Extern;
+    } else if (t.type == TOK_KW_CONST || t.type == TOK_KW_VOLATILE) {
+      lexer_->next();
+    } else {
+      break;
+    }
+  }
+
   if (peek().type == TOK_KW_STRUCT || peek().type == TOK_KW_UNION) {
-    auto node = parse_struct_or_union_decl();
+    auto node = parse_struct_or_union_decl(sc);
     if (node->getType() == ASTNodeType::VarDecl) {
       return std::unique_ptr<VarDeclNode>(static_cast<VarDeclNode *>(node.release()));
     }
@@ -510,8 +681,33 @@ std::unique_ptr<VarDeclNode> Parser::parse_var_decl() {
     parse_error(peek(), "Expected variable declaration");
   }
   DataType type = parse_type_specifier();
+  if (sc == StorageClass::None) {
+    Token t = peek();
+    if (t.type == TOK_KW_REGISTER) {
+      match(TOK_KW_REGISTER);
+      sc = StorageClass::Register;
+    } else if (t.type == TOK_KW_AUTO) {
+      match(TOK_KW_AUTO);
+      sc = StorageClass::Auto;
+    } else if (t.type == TOK_KW_STATIC) {
+      match(TOK_KW_STATIC);
+      sc = StorageClass::Static;
+    } else if (t.type == TOK_KW_EXTERN) {
+      match(TOK_KW_EXTERN);
+      sc = StorageClass::Extern;
+    }
+  }
   if (peek().type == TOK_LPAREN && peek(2).type == TOK_STAR) {
-    return parse_func_ptr_decl(type);
+    auto fp_node = parse_func_ptr_decl(type);
+    fp_node->storage_class = sc;
+    fp_node->is_register = (sc == StorageClass::Register);
+    fp_node->is_static = (sc == StorageClass::Static);
+    fp_node->is_extern = (sc == StorageClass::Extern);
+    fp_node->is_auto = (sc == StorageClass::Auto);
+    if (sc == StorageClass::Register) {
+      register_var_name(fp_node->name);
+    }
+    return fp_node;
   }
   int pointer_level = 0;
   while (match(TOK_STAR)) {
@@ -521,5 +717,14 @@ std::unique_ptr<VarDeclNode> Parser::parse_var_decl() {
   if (type == DataType::Void && pointer_level == 0) {
     parse_error(id_tok, "Variable cannot have type 'void'");
   }
-  return parse_var_decl_after_id(type, id_tok, pointer_level);
+  auto var_decl = parse_var_decl_after_id(type, id_tok, pointer_level);
+  var_decl->storage_class = sc;
+  var_decl->is_register = (sc == StorageClass::Register);
+  var_decl->is_static = (sc == StorageClass::Static);
+  var_decl->is_extern = (sc == StorageClass::Extern);
+  var_decl->is_auto = (sc == StorageClass::Auto);
+  if (sc == StorageClass::Register) {
+    register_var_name(var_decl->name);
+  }
+  return var_decl;
 }

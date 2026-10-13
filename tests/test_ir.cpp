@@ -240,6 +240,25 @@ static void test_ir_inc_dec_and_compound() {
   assert(out.find("add") != std::string::npos);
 }
 
+static void test_ir_register_storage_class() {
+  std::cout << "Testing IR Lowering with 'register' Storage Class...\n";
+
+  auto prog = parse("int sum(register int a, register int b) {\n"
+                    "  register int total = a + b;\n"
+                    "  return total;\n"
+                    "}\n");
+  IRBuilder builder(TargetInfo::get(TargetArch::X86_64));
+  IRModule mod = builder.build(*prog);
+
+  std::ostringstream ss;
+  mod.print(ss);
+  std::string out = ss.str();
+
+  assert(out.find("function @sum") != std::string::npos);
+  assert(out.find("add") != std::string::npos);
+  assert(out.find("ret") != std::string::npos);
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Intermediate Stage (IR) Tests\n";
@@ -253,6 +272,7 @@ int main() {
   test_ir_local_var_storage_modes();
   test_ir_ternary_lowering();
   test_ir_inc_dec_and_compound();
+  test_ir_register_storage_class();
 
   std::cout << "========================================\n";
   std::cout << "  ALL IR TESTS PASSED!\n";

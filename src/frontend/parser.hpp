@@ -7,6 +7,8 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 class ParseException : public std::runtime_error {
 public:
@@ -36,15 +38,22 @@ public:
   std::unique_ptr<AsmStmtNode> parse_asm();
 
   // Declarations (implemented in parser_decl.cpp)
+  bool is_storage_class(TokenType type) const;
   bool is_type_specifier(TokenType type) const;
   DataType parse_type_specifier();
   bool is_calling_convention(TokenType type) const;
   CallingConvention parse_calling_convention();
   std::unique_ptr<ASTNode> parse_declaration();
-  std::unique_ptr<ASTNode> parse_struct_or_union_decl();
-  std::unique_ptr<FuncDefNode> parse_function_def(DataType return_type, const Token &id_tok, int return_pointer_level = 0, CallingConvention calling_convention = CallingConvention::Default, bool is_static = false);
+  std::unique_ptr<ASTNode> parse_struct_or_union_decl(StorageClass sc = StorageClass::None);
+  std::unique_ptr<FuncDefNode> parse_function_def(DataType return_type, const Token &id_tok, int return_pointer_level = 0, CallingConvention calling_convention = CallingConvention::Default, bool is_static = false, StorageClass storage_class = StorageClass::None);
   std::unique_ptr<VarDeclNode> parse_var_decl_after_id(DataType type, const Token &id_tok, int pointer_level = 0);
   std::unique_ptr<VarDeclNode> parse_var_decl();
+
+  // Scope tracking for register variables
+  void push_scope();
+  void pop_scope();
+  void register_var_name(const std::string &name);
+  bool is_register_var(const std::string &name) const;
 
   // Expressions (implemented in parser_expr.cpp)
   std::unique_ptr<ASTNode> parse_expr();
@@ -70,6 +79,8 @@ public:
 private:
   Lexer *lexer_;
   std::unordered_map<std::string, std::pair<DataType, int>> typedefs_;
+  std::vector<std::unordered_set<std::string>> register_scopes_;
+  std::vector<std::string> pending_register_params_;
 
   // Declaration parsing helpers (parser_decl.cpp)
   std::unique_ptr<VarDeclNode> parse_func_ptr_decl(DataType return_type, CallingConvention calling_convention = CallingConvention::Default);

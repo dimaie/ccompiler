@@ -252,6 +252,12 @@ std::unique_ptr<ASTNode> Parser::parse_unary() {
       t.type == TOK_TILDE || t.type == TOK_STAR || t.type == TOK_AMP) {
     lexer_->next();
     auto expr = parse_unary();
+    if (t.type == TOK_AMP && expr && expr->getType() == ASTNodeType::Identifier) {
+      const auto *id_node = static_cast<const IdentifierNode *>(expr.get());
+      if (is_register_var(id_node->name)) {
+        parse_error(t, "Address of register variable '" + id_node->name + "' requested");
+      }
+    }
     return std::make_unique<UnaryOpNode>(t.line, t.type, std::move(expr));
   }
   return parse_primary();

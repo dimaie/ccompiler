@@ -1972,6 +1972,161 @@ static void test_inc_dec_and_compound_assignments() {
   }
 }
 
+static void test_register_storage_class() {
+  std::cout << "Testing 'register' Storage Class Specifier...\n";
+
+  // 1. Basic register variable declaration
+  {
+    auto prog = parse_source("register int x = 42;\n");
+    assert(prog->statements.size() == 1);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->name == "x");
+    assert(var->data_type == DataType::Int);
+    assert(var->is_register == true);
+    assert(var->storage_class == StorageClass::Register);
+    assert(var->init != nullptr);
+  }
+
+  // 2. Register pointer declaration
+  {
+    auto prog = parse_source("register char *ptr = 0;\n");
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->name == "ptr");
+    assert(var->data_type == DataType::Char);
+    assert(var->pointer_level == 1);
+    assert(var->is_register == true);
+    assert(var->storage_class == StorageClass::Register);
+  }
+
+  // 3. Register with type qualifiers (const, volatile)
+  {
+    auto prog = parse_source("register const int c1 = 10;\nconst register int c2 = 20;\nregister volatile int v = 30;\n");
+    assert(prog->statements.size() == 3);
+    auto *v1 = static_cast<VarDeclNode *>(prog->statements[0].get());
+    auto *v2 = static_cast<VarDeclNode *>(prog->statements[1].get());
+    auto *v3 = static_cast<VarDeclNode *>(prog->statements[2].get());
+    assert(v1->is_register == true && v1->storage_class == StorageClass::Register);
+    assert(v2->is_register == true && v2->storage_class == StorageClass::Register);
+    assert(v3->is_register == true && v3->storage_class == StorageClass::Register);
+  }
+
+  // 4. Type specifier before register
+  {
+    auto prog = parse_source("int register y = 5;\n");
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->name == "y");
+    assert(var->data_type == DataType::Int);
+    assert(var->is_register == true);
+    assert(var->storage_class == StorageClass::Register);
+  }
+
+  // 5. Register struct variable
+  {
+    auto prog = parse_source("struct Point { int x; int y; };\nregister struct Point pt;\n");
+    assert(prog->statements.size() == 2);
+    auto *var = static_cast<VarDeclNode *>(prog->statements[1].get());
+    assert(var->name == "pt");
+    assert(var->struct_name == "Point");
+    assert(var->is_register == true);
+    assert(var->storage_class == StorageClass::Register);
+  }
+
+  // 6. Register inside for loop initializer
+  {
+    auto prog = parse_source("void test() { for (register int i = 0; i < 10; ++i) { } }\n");
+    auto *fn = static_cast<FuncDefNode *>(prog->statements[0].get());
+    auto *for_node = static_cast<ForNode *>(fn->body->statements[0].get());
+    auto *init_var = static_cast<VarDeclNode *>(for_node->init.get());
+    assert(init_var->name == "i");
+    assert(init_var->is_register == true);
+    assert(init_var->storage_class == StorageClass::Register);
+  }
+
+  // 7. Function parameters with register
+  {
+    auto prog = parse_source("int add(register int a, register int b) { return a + b; }\n");
+    auto *fn = static_cast<FuncDefNode *>(prog->statements[0].get());
+    assert(fn->params.size() == 2);
+    assert(fn->params[0].name == "a");
+    assert(fn->params[0].is_register == true);
+    assert(fn->params[0].storage_class == StorageClass::Register);
+    assert(fn->params[1].name == "b");
+    assert(fn->params[1].is_register == true);
+    assert(fn->params[1].storage_class == StorageClass::Register);
+  }
+
+  // 8. Function pointer with register param in prototype
+  {
+    auto prog = parse_source("void (*fp)(register int, register char);\n");
+    auto *var = static_cast<VarDeclNode *>(prog->statements[0].get());
+    assert(var->is_func_ptr == true);
+    assert(var->name == "fp");
+  }
+
+  // 9. Semantic constraint: Address-of '&' rejected on register variable
+  {
+    bool threw = false;
+    try {
+      parse_source("void test() { register int x = 5; int *p = &x; }\n");
+    } catch (const std::runtime_error &e) {
+      threw = true;
+      assert(std::string(e.what()).find("Address of register variable 'x' requested") != std::string::npos);
+    }
+    assert(threw);
+  }
+
+  // 10. Semantic constraint: Address-of '&' rejected on register function parameter
+  {
+    bool threw = false;
+    try {
+      parse_source("void test(register int a) { int *p = &a; }\n");
+    } catch (const std::runtime_error &e) {
+      threw = true;
+      assert(std::string(e.what()).find("Address of register variable 'a' requested") != std::string::npos);
+    }
+    assert(threw);
+  }
+
+  // 11. Taking address of normal variable in presence of register variable is allowed
+  {
+    auto prog = parse_source("void test() { register int x = 5; int y = 10; int *p = &y; }\n");
+    assert(prog != nullptr);
+  }
+
+  // 12. Multiple storage classes error
+  {
+    bool threw = false;
+    try {
+      parse_source("static register int x = 1;\n");
+    } catch (const std::runtime_error &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+
+  // 13. Function definition with register error
+  {
+    bool threw = false;
+    try {
+      parse_source("register int foo() { return 1; }\n");
+    } catch (const std::runtime_error &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+
+  // 14. Struct member with register error
+  {
+    bool threw = false;
+    try {
+      parse_source("struct S { register int x; };\n");
+    } catch (const std::runtime_error &) {
+      threw = true;
+    }
+    assert(threw);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running AST & Parser Test Suite\n";
@@ -2011,9 +2166,10 @@ int main() {
   test_calling_conventions();
   test_ternary_operator();
   test_inc_dec_and_compound_assignments();
+  test_register_storage_class();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (34/34)\n";
+  std::cout << "  ALL TESTS PASSED SUCCESSFULLY! (35/35)\n";
   std::cout << "========================================\n";
   return 0;
 }

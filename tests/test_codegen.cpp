@@ -2290,6 +2290,71 @@ static void test_inc_dec_and_compound_codegen() {
   }
 }
 
+static void test_register_storage_class_codegen() {
+  std::cout << "Testing 'register' Storage Class Code Generation...\n";
+
+  std::string src = "int compute(register int a, register int b) {\n"
+                    "  register int sum = 0;\n"
+                    "  for (register int i = 0; i < b; ++i) {\n"
+                    "    sum += a;\n"
+                    "  }\n"
+                    "  return sum;\n"
+                    "}\n"
+                    "int main() {\n"
+                    "  register int result = compute(6, 7);\n"
+                    "  return result;\n"
+                    "}\n";
+  auto prog = parse(src.c_str());
+
+  // 1. C Transpiler emits register keyword for parameters and local variables
+  {
+    auto gen = CodeGeneratorFactory::create(TargetArch::C_Transpiler);
+    std::string code = gen->generate_to_string(*prog);
+    assert(code.find("register int a") != std::string::npos);
+    assert(code.find("register int b") != std::string::npos);
+    assert(code.find("register int sum") != std::string::npos);
+    assert(code.find("register int i") != std::string::npos);
+    assert(code.find("register int result") != std::string::npos);
+  }
+
+  // 2. x86_64 code generation
+  {
+    auto gen = CodeGeneratorFactory::create(TargetArch::X86_64);
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find(".globl compute") != std::string::npos);
+    assert(asm_code.find(".globl main") != std::string::npos);
+
+    // Test assembling, linking, and running native PE binary
+    auto linker = AssemblerLinkerFactory::create("x86_64");
+    std::string exe_path = "test_register.exe";
+    auto res = linker->assemble_and_link(asm_code, exe_path);
+    assert(res.success);
+    assert(std::filesystem::exists(exe_path));
+
+    int ret = std::system(".\\test_register.exe");
+    assert(ret == 42);
+
+    std::error_code ec;
+    std::filesystem::remove(exe_path, ec);
+  }
+
+  // 3. ARM64 code generation
+  {
+    auto gen = CodeGeneratorFactory::create(TargetArch::ARM64);
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find(".globl compute") != std::string::npos);
+    assert(asm_code.find(".globl main") != std::string::npos);
+  }
+
+  // 4. AVR code generation
+  {
+    auto gen = CodeGeneratorFactory::create(TargetArch::AVR);
+    std::string asm_code = gen->generate_to_string(*prog);
+    assert(asm_code.find(".global compute") != std::string::npos);
+    assert(asm_code.find(".global main") != std::string::npos);
+  }
+}
+
 int main() {
   std::cout << "========================================\n";
   std::cout << "  Running Code Generator Test Suite\n";
@@ -2319,9 +2384,10 @@ int main() {
   test_debug_information_codegen();
   test_ternary_codegen();
   test_inc_dec_and_compound_codegen();
+  test_register_storage_class_codegen();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL CODEGEN TESTS PASSED! (24/24)\n";
+  std::cout << "  ALL CODEGEN TESTS PASSED! (25/25)\n";
   std::cout << "========================================\n";
   return 0;
 }

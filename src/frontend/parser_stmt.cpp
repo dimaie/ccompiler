@@ -4,11 +4,13 @@
 std::unique_ptr<CompoundNode> Parser::parse_compound_statement() {
   Token t = expect(TOK_LBRACE, "Expected '{'");
   auto compound = std::make_unique<CompoundNode>(t.line);
+  push_scope();
 
   while (peek().type != TOK_RBRACE && peek().type != TOK_EOF) {
     compound->append(parse_statement());
   }
   expect(TOK_RBRACE, "Expected '}' after block");
+  pop_scope();
   return compound;
 }
 
@@ -34,7 +36,7 @@ std::unique_ptr<ForNode> Parser::parse_for() {
 
   // 1. Init: var_decl | (expr)? ';'
   std::unique_ptr<ASTNode> init = nullptr;
-  if (is_type_specifier(peek().type)) {
+  if (is_storage_class(peek().type) || is_type_specifier(peek().type)) {
     init = parse_var_decl();
   } else if (match(TOK_SEMICOLON)) {
     init = nullptr;
@@ -172,8 +174,7 @@ std::unique_ptr<ASTNode> Parser::parse_statement() {
   Token t = peek();
   std::unique_ptr<ASTNode> res = nullptr;
 
-  if (t.type == TOK_KW_STATIC || t.type == TOK_KW_EXTERN ||
-      is_type_specifier(t.type) || is_calling_convention(t.type)) {
+  if (is_storage_class(t.type) || is_type_specifier(t.type) || is_calling_convention(t.type)) {
     res = parse_declaration();
   } else if (t.type == TOK_KW_FOR) {
     res = parse_for();

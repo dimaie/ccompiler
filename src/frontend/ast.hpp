@@ -159,6 +159,26 @@ inline const char *calling_convention_str(CallingConvention cc) {
   }
 }
 
+enum class StorageClass {
+  None,
+  Auto,
+  Register,
+  Static,
+  Extern,
+  Typedef
+};
+
+inline const char *storage_class_str(StorageClass sc) {
+  switch (sc) {
+  case StorageClass::Auto: return "auto";
+  case StorageClass::Register: return "register";
+  case StorageClass::Static: return "static";
+  case StorageClass::Extern: return "extern";
+  case StorageClass::Typedef: return "typedef";
+  default: return "none";
+  }
+}
+
 // Forward declarations of concrete AST nodes
 class ProgramNode;
 class CompoundNode;
@@ -314,6 +334,11 @@ public:
   bool func_ptr_is_variadic{false};
   std::string struct_name;
   CallingConvention func_ptr_calling_convention{CallingConvention::Default};
+  StorageClass storage_class{StorageClass::None};
+  bool is_register{false};
+  bool is_static{false};
+  bool is_extern{false};
+  bool is_auto{false};
 
   VarDeclNode(int line, DataType data_type, std::string name,
               std::unique_ptr<ASTNode> init = nullptr)
@@ -343,12 +368,20 @@ public:
       std::cout << "VarDecl (func_ptr " << name << ")\n";
     } else if (is_array) {
       std::cout << "VarDecl (";
+      if (is_register || storage_class == StorageClass::Register) std::cout << "register ";
+      if (is_static || storage_class == StorageClass::Static) std::cout << "static ";
+      if (is_extern || storage_class == StorageClass::Extern) std::cout << "extern ";
+      if (is_auto || storage_class == StorageClass::Auto) std::cout << "auto ";
       if (!struct_name.empty()) std::cout << data_type_str(data_type) << " " << struct_name;
       else std::cout << data_type_str(data_type);
       for (int i = 0; i < pointer_level; ++i) std::cout << "*";
       std::cout << " " << name << "[" << array_size << "])\n";
     } else {
       std::cout << "VarDecl (";
+      if (is_register || storage_class == StorageClass::Register) std::cout << "register ";
+      if (is_static || storage_class == StorageClass::Static) std::cout << "static ";
+      if (is_extern || storage_class == StorageClass::Extern) std::cout << "extern ";
+      if (is_auto || storage_class == StorageClass::Auto) std::cout << "auto ";
       if (!struct_name.empty()) std::cout << data_type_str(data_type) << " " << struct_name;
       else std::cout << data_type_str(data_type);
       for (int i = 0; i < pointer_level; ++i) std::cout << "*";
@@ -372,6 +405,8 @@ struct Param {
   bool func_ptr_is_variadic{false};
   std::string struct_name;
   CallingConvention func_ptr_calling_convention{CallingConvention::Default};
+  StorageClass storage_class{StorageClass::None};
+  bool is_register{false};
 };
 
 class FuncDefNode : public ASTNode {
@@ -383,6 +418,7 @@ public:
   std::unique_ptr<CompoundNode> body;
   std::string return_struct_name;
   CallingConvention calling_convention{CallingConvention::Default};
+  StorageClass storage_class{StorageClass::None};
   bool is_static{false};
   bool is_variadic{false};
 
@@ -390,12 +426,13 @@ public:
               std::vector<Param> params, std::unique_ptr<CompoundNode> body,
               int return_pointer_level = 0,
               CallingConvention calling_convention = CallingConvention::Default,
-              bool is_static = false, bool is_variadic = false)
+              bool is_static = false, bool is_variadic = false,
+              StorageClass storage_class = StorageClass::None)
       : ASTNode(line), return_type(return_type),
         return_pointer_level(return_pointer_level), name(std::move(name)),
         params(std::move(params)), body(std::move(body)),
-        calling_convention(calling_convention), is_static(is_static),
-        is_variadic(is_variadic) {}
+        calling_convention(calling_convention), storage_class(storage_class),
+        is_static(is_static), is_variadic(is_variadic) {}
 
   ASTNodeType getType() const override { return ASTNodeType::FuncDef; }
   void accept(ASTVisitor &visitor) const override { visitor.visit(*this); }
