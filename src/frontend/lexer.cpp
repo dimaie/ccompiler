@@ -57,10 +57,8 @@ Lexer::Lexer(const char *source) { init(source); }
 Lexer::Lexer(std::string_view source) { init(source); }
 
 void Lexer::init(const char *source) {
-  if (source != owned_src_.c_str()) {
-    owned_src_.clear();
-  }
-  src_ = source ? source : "";
+  owned_src_ = source;
+  src_ = owned_src_.c_str();
   cursor_ = 0;
   line_ = 1;
   col_ = 1;

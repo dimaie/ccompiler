@@ -3,6 +3,7 @@
 #include "avr/codegen_avr.hpp"
 #include "c/codegen_c.hpp"
 #include "x86_64/codegen_x86_64.hpp"
+#include "z80/codegen_z80.hpp"
 #include <algorithm>
 #include <stdexcept>
 
@@ -17,6 +18,9 @@ std::unique_ptr<ICodeGenerator> CodeGeneratorFactory::create(TargetArch arch, co
     break;
   case TargetArch::ARM64:
     gen = std::make_unique<ARM64CodeGenerator>();
+    break;
+  case TargetArch::Z80:
+    gen = std::make_unique<Z80CodeGenerator>();
     break;
   case TargetArch::C_Transpiler:
     gen = std::make_unique<CCodeGenerator>();

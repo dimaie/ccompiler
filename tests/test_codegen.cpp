@@ -49,6 +49,123 @@ static void test_factory() {
   assert(threw);
 }
 
+static void test_z80_codegen() {
+  std::cout << "Testing Z80 / ZX Spectrum assembly generation...\n";
+  auto gen = CodeGeneratorFactory::create("z80-spectrum");
+  assert(gen->get_arch() == TargetArch::Z80);
+  assert(gen->get_effective_local_var_storage() == LocalVarStorage::Stack);
+  for (const char *alias : {"z80", "spectrum", "zx-spectrum", "zxspectrum", "Z80-SPECTRUM"}) {
+    auto spec = TargetSpec::parse(alias);
+    assert(spec.to_string() == "z80-spectrum");
+    assert(spec.os == TargetOS::ZXSpectrum);
+    assert(spec.format == TargetFormat::AssemblyOnly);
+    assert(spec.abi == TargetABI::Z80_Stack);
+    assert(spec.default_output_filename() == "a.s");
+    assert(spec.default_extension() == ".s");
+    auto linker = AssemblerLinkerFactory::create(spec);
+    assert(linker->get_arch() == TargetArch::Z80);
+    assert(!linker->is_supported());
+  }
+  {
+    CompilerConfig config;
+    CommandLineParser cli;
+    std::string error;
+    bool help = false;
+    assert(cli.parse(std::vector<std::string>{"cc", "-t", "spectrum", "-S", "input.c"},
+                     config, error, help));
+    assert(config.general.target_spec.arch == TargetArch::Z80);
+    assert(config.general.stop_phase == StopPhase::AssembleOnly);
+  }
+  auto program = parse(
+      "int counter = -3;\n"
+      "char attributes[4] = {1, 255};\n"
+      "int add(int a, int b) { int result = a + b; return result; }\n"
+      "int main(void) {\n"
+      "  char byte = 255;\n"
+      "  int values[3] = {10, 20};\n"
+      "  int *p = values;\n"
+      "  char *screen = 22528;\n"
+      "  screen[0] = byte;\n"
+      "  p++; p[0] = add(values[0], 2);\n"
+      "  return p[0];\n"
+      "}\n");
+  std::string code = gen->generate_to_string(*program);
+  assert(code.find("DEVICE ZXSPECTRUM48") != std::string::npos);
+  assert(code.find("ORG 32768") != std::string::npos);
+  assert(code.find("__z80_start:\n    call _fn_main\n    ld b,h\n    ld c,l\n    ret") != std::string::npos);
+  assert(code.find("_fn_add:\n    push ix\n    ld ix,0\n    add ix,sp") != std::string::npos);
+  assert(code.find("ld de,4") != std::string::npos);
+  assert(code.find("ld de,6") != std::string::npos);
+  assert(code.find("call _fn_add\n    pop de\n    pop de") != std::string::npos);
+  assert(code.find("ld hl,-11\n    add hl,sp\n    ld sp,hl") != std::string::npos);
+  assert(code.find("ld a,l\n    add a,a\n    sbc a,a\n    ld h,a") != std::string::npos);
+  assert(code.find("add hl,hl\n    pop de\n    add hl,de") != std::string::npos);
+  assert(code.find("_g_counter:\n    dw 65533") != std::string::npos);
+  assert(code.find("_g_attributes:\n    db 1\n    db 255\n    defs 2,0") != std::string::npos);
+  assert(code.find("ld sp,ix\n    pop ix\n    ret") != std::string::npos);
+  assert(code == gen->generate_to_string(*program));
+
+  auto control = parse(
+      "int hit(void) { return 1; }\n"
+      "int main(void) {\n"
+      "  int n = 0;\n"
+      "  if (n && hit()) return 99;\n"
+      "  for (int i = 0; i < 10; i++) { if (i == 2) continue; n += i; }\n"
+      "  while (n > 20) { n--; if (n == 22) break; }\n"
+      "  do { n++; } while (n < 22);\n"
+      "  switch (n) { case 22: n = 7; break; default: n = 0; }\n"
+      "  goto done; done:\n"
+      "  return n ? n * 3 / 2 % 5 : ~(-n >> 1);\n"
+      "}\n");
+  code = gen->generate_to_string(*control);
+  assert(code.find("jp z,__z80_logic_short") < code.find("call _fn_hit"));
+  for (const char *fragment : {"__z80_for_step", "__z80_while_cond", "__z80_do_cond",
+                               "__z80_switch_end", "_label_main_done:", "__z80_ternary_else",
+                               "__z80_mul", "__z80_div_loop", "sra h", "xor 128"})
+    assert(code.find(fragment) != std::string::npos);
+
+  auto shadowing = parse("int main(void) { int x = 1; { char x = 2; x++; } return x; }");
+  code = gen->generate_to_string(*shadowing);
+  assert(code.find("ld hl,-3\n") != std::string::npos);
+  assert(code.find("ld de,-2\n") != std::string::npos);
+  assert(code.find("ld de,-3\n") != std::string::npos);
+
+  auto string = parse("int main(void) { char *s = \"A\\n\"; return s[1]; }");
+  code = gen->generate_to_string(*string);
+  assert(code.find("db 65,10,0") != std::string::npos);
+  auto pointers = parse("int main(void) { char *a = 32768; char *b = 22528; return a > b; }");
+  code = gen->generate_to_string(*pointers);
+  assert(code.find("xor 128") == std::string::npos);
+
+  auto inline_asm = parse("int main(void) { asm(\"ld a,1\\nlabel1: out (254),a\"); return 0; }");
+  code = gen->generate_to_string(*inline_asm);
+  assert(code.find("    ld a,1\nlabel1: out (254),a\n") != std::string::npos);
+
+  for (const char *source : {
+           "int main(void) { long x = 1; return x; }",
+           "int main(void) { return 65536; }",
+           "int x = 65536; int main(void) { return x; }",
+           "int x = 1 + 2; int main(void) { return x; }",
+           "int main(void) { static int x; return x; }",
+           "int f(int x, ...) { return x; }",
+           "int main(void) { int *p = 0; return p * 2; }"}) {
+    bool threw = false;
+    try { gen->generate_to_string(*parse(source)); }
+    catch (const UnsupportedFeatureException &e) {
+      threw = true;
+      assert(e.get_arch() == "z80");
+      assert(e.get_line() > 0);
+    }
+    assert(threw);
+  }
+  CodeGenOptions memory;
+  memory.local_var_storage = LocalVarStorage::Memory;
+  bool threw = false;
+  try { CodeGeneratorFactory::create("z80", memory); }
+  catch (const UnsupportedFeatureException &) { threw = true; }
+  assert(threw);
+}
+
 static void test_x86_64_codegen() {
   std::cout << "Testing x86_64 Code Generation...\n";
 
@@ -2361,6 +2478,7 @@ int main() {
   std::cout << "========================================\n";
 
   test_factory();
+  test_z80_codegen();
   test_x86_64_codegen();
   test_arm64_codegen();
   test_avr_codegen();
@@ -2387,7 +2505,7 @@ int main() {
   test_register_storage_class_codegen();
 
   std::cout << "========================================\n";
-  std::cout << "  ALL CODEGEN TESTS PASSED! (25/25)\n";
+  std::cout << "  ALL CODEGEN TESTS PASSED! (26/26)\n";
   std::cout << "========================================\n";
   return 0;
 }

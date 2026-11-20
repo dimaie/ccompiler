@@ -10,7 +10,7 @@
 #include <string>
 
 enum class LocalVarStorage {
-  Auto,     // Architecture default: Memory for AVR, Stack for x86_64/arm64/c
+  Auto,     // Architecture default: Memory for AVR, Stack for other targets
   Stack,    // Stack frame allocation (re-entrant)
   Memory    // Static memory / SRAM allocation (fast, small code size, non-reentrant)
 };

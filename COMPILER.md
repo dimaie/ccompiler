@@ -138,7 +138,7 @@ The codebase is organized into cleanly decoupled directories:
 - **Target Information (`target_info.hpp`)**:
   - `TargetInfo::get(TargetArch)` and `TargetInfo::from_string(arch_name, local_var_storage)`.
   - Defines `char_size`, `short_size`, `int_size`, `long_size`, `pointer_size`, `is_64bit`, and `is_little_endian`.
-  - Resolves `get_effective_local_var_storage()` (`LocalVarStorage::Memory` for AVR by default, `LocalVarStorage::Stack` for 64-bit platforms).
+  - Resolves `get_effective_local_var_storage()` (`LocalVarStorage::Memory` for AVR by default, `LocalVarStorage::Stack` for other targets).
 - **Three-Address Code IR (`ir.hpp`, `ir.cpp`)**:
   - `IROpKind`: Operations covering `Assign`, `Add`, `Sub`, `Mul`, `Div`, `Mod`, `Neg`, `BitAnd`, `BitOr`, `BitXor`, `BitNot`, `Shl`, `Shr`, `Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge`, `Load`, `Store`, `Alloca`, `Gep`, `Branch`, `BranchIf`, `Jump`, `Label`, `Call`, `Return`, `InlineAsm`.
   - `IROperand`: Strongly typed operands (`Constant`, `Variable`, `Temp` virtual register, `Label`, `Global`).
@@ -159,9 +159,9 @@ The codebase is organized into cleanly decoupled directories:
   - `CodeGeneratorFactory::create(arch, options)`: Instantiates target-specific generators.
   - Standardized `UnsupportedFeatureException` throwing when an architecture encounters an unsupported feature.
 - **Local Variable Storage Models (`LocalVarStorage`)**:
-  - `Stack`: Traditional frame pointer (`rbp` / `x29` / `Y`) based stack allocations.
+  - `Stack`: Traditional frame pointer (`rbp` / `x29` / `Y` / `IX`) based stack allocations.
   - `Memory`: Static SRAM variable allocations (crucial for 8-bit AVR microcontrollers with limited hardware stack).
-  - `Auto`: Resolves to `Memory` for AVR, `Stack` for 64-bit architectures.
+  - `Auto`: Resolves to `Memory` for AVR, `Stack` for other targets.
 
 ### Architecture-Specific Backends, Assemblers & Linkers (`src/backend/`)
 
@@ -268,6 +268,7 @@ The compiler distinguishes targets by **architecture**, **operating system**, **
 | `x86_64-linux` | `x86_64` | Linux | Static ELF64 (`ET_EXEC`) | System V AMD64 (`rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`) | Linux 64-bit static executable |
 | `arm64-linux` | `arm64` | Linux | ELF64 / Asm | AAPCS64 (`x0`–`x7`, 16B SP align) | Linux 64-bit ARMv8-A (Raspberry Pi, etc.) |
 | `avr-none` | `avr` | Bare-Metal | Intel HEX (`.hex`) | AVR Default (r24:r25 return, r1 zero) | Arduino Uno / ATmega328P flash firmware |
+| `z80-spectrum` | `z80` | ZX Spectrum 48K | sjasmplus assembly (`.s`) | Stack arguments, caller cleanup, HL return | External assembly required; entry at 32768 |
 | `c-none` | `c` | None | Portable C Source | None | Portable ANSI C / C99 transpilation |
 
 #### Target Format Syntax & Aliases
@@ -277,6 +278,7 @@ The compiler distinguishes targets by **architecture**, **operating system**, **
   - `linux`, `elf64` $\rightarrow$ `x86_64-linux`
   - `arm64`, `aarch64`, `rpi` $\rightarrow$ `arm64-linux`
   - `avr`, `arduino`, `atmega328p` $\rightarrow$ `avr-none`
+  - `z80`, `spectrum`, `zx-spectrum`, `zxspectrum` map to `z80-spectrum`
   - `c`, `c_transpiler` $\rightarrow$ `c-none`
 
 ### Stop Phases
@@ -340,6 +342,24 @@ The compiler distinguishes targets by **architecture**, **operating system**, **
 ---
 
 ## 4. Target Architectures
+
+### Z80 / ZX Spectrum 48K
+
+- **Backend**: `src/backend/z80/codegen_z80.hpp`, `codegen_z80.cpp`.
+- **Output**: sjasmplus syntax with `DEVICE ZXSPECTRUM48` and `ORG 32768`.
+  This is an assembly-only target, using the existing stub assembler/linker.
+- **Data model**: signed 8-bit char, 16-bit short/int and pointers, little-endian.
+  IR describes long as 32-bit, but the assembly backend rejects long/long long
+  and aggregate types rather than silently truncating them.
+- **ABI**: right-to-left two-byte stack argument slots, caller cleanup, HL
+  result, preserved IX frame pointer. AF/BC/DE/HL are scratch registers;
+  generated code does not modify IY or the alternate register set.
+- **Entry**: when a main definition exists, a stub at 32768 calls `_fn_main`,
+  copies HL to BC for BASIC `USR`, and returns without replacing BASIC's stack.
+  Function and global assembly symbols use `_fn_` and `_g_` prefixes.
+- **Features and limitations**: see the [Spectrum workflow](README.md#zx-spectrum-z80)
+  for supported constructs, external assembly/loading commands, and memory
+  requirements. No Spectrum ROM wrappers or C library are linked implicitly.
 
 ### x86_64 (Windows x64 / AMD64)
 

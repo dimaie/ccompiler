@@ -10,6 +10,7 @@ const char *target_arch_str(TargetArch arch) {
   case TargetArch::X86_64: return "x86_64";
   case TargetArch::ARM64: return "arm64";
   case TargetArch::AVR: return "avr";
+  case TargetArch::Z80: return "z80";
   case TargetArch::C_Transpiler: return "c";
   default: return "unknown";
   }
@@ -19,6 +20,7 @@ const char *target_os_str(TargetOS os) {
   switch (os) {
   case TargetOS::Windows: return "windows";
   case TargetOS::Linux: return "linux";
+  case TargetOS::ZXSpectrum: return "spectrum";
   case TargetOS::BareMetal: return "none";
   case TargetOS::None: return "none";
   default: return "unknown";
@@ -42,6 +44,7 @@ const char *target_abi_str(TargetABI abi) {
   case TargetABI::SysV_AMD64: return "sysv";
   case TargetABI::AAPCS64: return "aapcs64";
   case TargetABI::AVR_Default: return "avr";
+  case TargetABI::Z80_Stack: return "z80-stack";
   case TargetABI::None: return "none";
   default: return "unknown";
   }
@@ -95,6 +98,12 @@ TargetSpec TargetSpec::parse(const std::string &str) {
   }
 
   // 3. ARM64 (Linux / AArch64)
+  if (lower == "z80" || lower == "spectrum" || lower == "zx-spectrum" ||
+      lower == "zxspectrum" || lower == "z80-spectrum") {
+    return TargetSpec(TargetArch::Z80, TargetOS::ZXSpectrum,
+                      TargetFormat::AssemblyOnly, TargetABI::Z80_Stack, "z80-spectrum");
+  }
+
   if (lower == "arm64-linux" || lower == "aarch64-linux" || lower == "aarch64-linux-gnu" ||
       lower == "arm64-linux-gnu" || lower == "arm64-elf" || lower == "aarch64-elf") {
     return TargetSpec(TargetArch::ARM64, TargetOS::Linux, TargetFormat::ELF, TargetABI::AAPCS64, "arm64-linux");
@@ -142,6 +151,7 @@ void TargetSpec::print_supported_targets(std::ostream &out) {
       << "  x86_64-linux       x86_64     Linux       ELF        SysV AMD64   Linux 64-bit static ELF executable\n"
       << "  arm64-linux        arm64      Linux       ELF        AAPCS64      Linux 64-bit ARMv8-A (Raspberry Pi, etc.)\n"
       << "  avr-none           avr        Bare-Metal  Intel HEX  AVR Default  Arduino Uno / ATmega328P flash firmware\n"
+      << "  z80-spectrum       z80        Spectrum    Assembly   Z80 Stack    ZX Spectrum 48K (sjasmplus syntax)\n"
       << "  c-none             c          None        C Source   None         Portable ANSI C / C99 transpilation\n\n"
       << "Target Format Syntax:\n"
       << "  -t <arch>[-<os>]\n\n"
@@ -150,5 +160,6 @@ void TargetSpec::print_supported_targets(std::ostream &out) {
       << "  linux, elf64                   x86_64-linux\n"
       << "  arm64, aarch64, rpi            arm64-linux\n"
       << "  avr, arduino, atmega328p       avr-none\n"
+      << "  z80, spectrum, zx-spectrum     z80-spectrum (assembly only)\n"
       << "  c, c_transpiler                c-none\n";
 }

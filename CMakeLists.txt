@@ -19,6 +19,7 @@ include_directories(
     src/backend/x86_64
     src/backend/arm64
     src/backend/avr
+    src/backend/z80
     src/backend/c
     src/driver
 )
@@ -50,6 +51,7 @@ set(BACKEND_SOURCES
     src/backend/avr/avr_assembler.cpp
     src/backend/avr/avr_linker.cpp
     src/backend/c/codegen_c.cpp
+    src/backend/z80/codegen_z80.cpp
 )
 
 set(DRIVER_SOURCES

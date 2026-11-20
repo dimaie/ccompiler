@@ -67,6 +67,13 @@ struct TargetInfo {
       info.pointer_size = 2;
       info.is_64bit = false;
       break;
+    case TargetArch::Z80:
+      info.name = "z80";
+      info.int_size = 2;
+      info.long_size = 4;
+      info.pointer_size = 2;
+      info.is_64bit = false;
+      break;
     case TargetArch::C_Transpiler:
       info.name = "c";
       info.int_size = 4;

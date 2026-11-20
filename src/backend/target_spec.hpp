@@ -12,6 +12,7 @@ enum class TargetArch {
   X86_64,
   AVR,
   ARM64,
+  Z80,
   C_Transpiler
 };
 
@@ -22,6 +23,7 @@ enum class TargetOS {
   Windows,      // Windows (PE32+, Win64 ABI, system DLLs)
   Linux,        // Linux (ELF64, SysV AMD64 / AAPCS64 ABI, Linux syscalls)
   BareMetal,    // Bare-metal microcontrollers (AVR / Harvard architecture, raw memory)
+  ZXSpectrum,
   None          // Source transpilation or OS-agnostic
 };
 
@@ -44,6 +46,7 @@ enum class TargetABI {
   SysV_AMD64,   // System V AMD64 (rdi, rsi, rdx, rcx, r8, r9)
   AAPCS64,      // ARM 64-bit Architecture Procedure Call Standard (x0-x7)
   AVR_Default,  // 8-bit AVR calling convention (r24:r25, r22:r23, etc.)
+  Z80_Stack,    // 16-bit stack arguments, caller cleanup, HL return value
   None
 };
 

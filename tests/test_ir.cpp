@@ -32,6 +32,17 @@ static void test_target_info() {
   assert(arm.is_64bit);
   assert(arm.pointer_size == 8);
 
+  auto z80 = TargetInfo::from_string("z80-spectrum");
+  assert(z80.arch == TargetArch::Z80);
+  assert(!z80.is_64bit);
+  assert(z80.is_little_endian);
+  assert(z80.get_type_size(DataType::Char) == 1);
+  assert(z80.get_type_size(DataType::Short) == 2);
+  assert(z80.get_type_size(DataType::Int) == 2);
+  assert(z80.get_type_size(DataType::Long) == 4);
+  assert(z80.pointer_size == 2);
+  assert(z80.get_effective_local_var_storage() == LocalVarStorage::Stack);
+
   auto from_str_x86 = TargetInfo::from_string("x86_64");
   assert(from_str_x86.arch == TargetArch::X86_64);
   assert(from_str_x86.pointer_size == 8);

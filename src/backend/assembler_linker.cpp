@@ -212,6 +212,9 @@ AssemblerLinkerFactory::create(const TargetSpec &spec) {
   if (spec.arch == TargetArch::AVR) {
     return std::make_unique<AVRAssemblerLinker>();
   }
+  if (spec.arch == TargetArch::Z80) {
+    return std::make_unique<StubAssemblerLinker>(TargetArch::Z80, "z80-spectrum");
+  }
   if (spec.arch == TargetArch::C_Transpiler) {
     return std::make_unique<StubAssemblerLinker>(TargetArch::C_Transpiler, "c");
   }
@@ -236,6 +239,9 @@ AssemblerLinkerFactory::create(TargetArch arch) {
     break;
   case TargetArch::ARM64:
     spec.os = TargetOS::Linux;
+    break;
+  case TargetArch::Z80:
+    spec.os = TargetOS::ZXSpectrum;
     break;
   case TargetArch::C_Transpiler:
     spec.os = TargetOS::None;
